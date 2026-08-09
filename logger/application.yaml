@@ -1,0 +1,40 @@
+app:
+  name: service-template
+  version: 0.0.1
+
+server:
+  groups:
+    - /service-template/v1
+
+  gin:
+    port: ":8080"
+    readHeaderTimeout: 5s
+    LoggerWithConfig:
+      enabled: true
+      SkipPaths:
+        - /health
+      SkipQueryString: false
+  grpc:
+    LoggerWithConfig:
+      enabled: true
+      SkipFunction: []
+
+logger:
+  level: info
+  ignoredHeaders:
+    - Authorization
+    - Cookie
+  formatter: json
+  formatDate: "2006-01-02T15:04:05.000"
+  bodyCaptureMaxBytes: 65536
+  rotate:
+    enable: true
+    maxSize: 10
+    maxBackups: 5
+    maxAge: 30
+    compress: true
+  sensibleKeys:
+    - password
+    - pwd
+    - email
+    - phone

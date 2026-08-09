@@ -1,0 +1,7 @@
+**/.vscode
+**/logs
+**/coverage.html
+**/.gocache
+**/.idea
+**/.claude
+.push.txt.kate-swp**/venv
