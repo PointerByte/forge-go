@@ -1,6 +1,6 @@
-# GoForge Encrypt
+# forge-go Encrypt
 
-`encrypt` es el modulo de criptografia independiente de GoForge. Expone una
+`encrypt` es el modulo de criptografia independiente de forge-go. Expone una
 API estilo repositorio para cifrado simetrico, hashing, utilidades RSA/ECC y
 firmas digitales, con implementaciones intercambiables locales y respaldadas
 por proveedores cloud.

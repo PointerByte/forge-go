@@ -1,6 +1,6 @@
-# GoForge Logger
+# forge-go Logger
 
-`logger` provee la capa de logging estructurado de GoForge. Configura un
+`logger` provee la capa de logging estructurado de forge-go. Configura un
 logger global basado en `slog`, formatea entradas como JSON, texto o template
 custom, exporta logs mediante OpenTelemetry e incluye middleware Gin e
 interceptores gRPC para logs asociados al request.

@@ -5,3 +5,4 @@
 **/.idea
 **/.claude
 .push.txt.kate-swp**/venv
+tools/api-inventory/api-inventory

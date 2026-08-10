@@ -1,7 +1,7 @@
-# GoForge portable core
+# forge-go portable core
 
 This nested Go module is the dependency-free source of truth for deterministic
-GoForge rules that can cross the native Go, WebAssembly component, and Deno
+forge-go rules that can cross the native Go, WebAssembly component, and Deno
 boundaries. It implements contract package `pointerbyte:goforge@0.1.0` and the
 strict JSON bridge `goforge.abi.v1`.
 

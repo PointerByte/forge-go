@@ -1,6 +1,6 @@
-# GoForge Encrypt
+# forge-go Encrypt
 
-`encrypt` is the standalone cryptography module for GoForge. It exposes a
+`encrypt` is the standalone cryptography module for forge-go. It exposes a
 repository-style API for symmetric encryption, hashing, RSA/ECC helpers, and
 digital signatures, with interchangeable local and cloud-backed
 implementations.

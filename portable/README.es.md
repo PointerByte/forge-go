@@ -1,7 +1,7 @@
-# Núcleo portable de GoForge
+# Núcleo portable de forge-go
 
 Este módulo Go anidado es la fuente de verdad sin dependencias para las reglas
-deterministas de GoForge que cruzan los límites de Go nativo, componentes
+deterministas de forge-go que cruzan los límites de Go nativo, componentes
 WebAssembly y Deno. Implementa el paquete de contrato
 `pointerbyte:goforge@0.1.0` y el puente JSON estricto `goforge.abi.v1`.
 

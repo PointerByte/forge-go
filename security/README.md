@@ -1,4 +1,4 @@
-# GoForge Security
+# forge-go Security
 
 `security` provides JWT services and Gin middleware for token-based
 authentication. It uses `viper` for configured services and depends on

@@ -1,6 +1,6 @@
 # go-openssl
 
-`go-openssl` es la CLI de GoForge para generar certificados y llaves PEM para
+`go-openssl` es la CLI de forge-go para generar certificados y llaves PEM para
 RSA, ECC/ECDSA o Ed25519. Puede crear certificados autofirmados, certificados
 CA, certificados firmados por una CA existente y envoltorios PEM cifrados que
 luego pueden leerse desde la CLI o desde la API Go.

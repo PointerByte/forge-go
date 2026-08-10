@@ -1,6 +1,6 @@
 # qgo
 
-`qgo` is the GoForge service scaffolding CLI. It creates starter projects for
+`qgo` is the forge-go service scaffolding CLI. It creates starter projects for
 Gin HTTP services or gRPC services, writes the initial application
 configuration, initializes `go.mod`, and runs `go mod tidy`.
 
@@ -31,7 +31,7 @@ qgo new grpc
 ```
 
 Both commands support interactive prompts and non-interactive flags.
-When run in an interactive terminal, `qgo new ...` shows a short GoForge intro
+When run in an interactive terminal, `qgo new ...` shows a short forge-go intro
 animation before scaffolding.
 
 ## Non-Interactive Usage
@@ -91,7 +91,7 @@ go mod edit -go=<version>
 go mod tidy
 ```
 
-`go mod tidy` downloads the GoForge dependencies required by the generated
+`go mod tidy` downloads the forge-go dependencies required by the generated
 service, so network access may be needed.
 
 ## Gin Scaffold

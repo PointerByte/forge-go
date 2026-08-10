@@ -1,6 +1,6 @@
-# GoForge Logger
+# forge-go Logger
 
-`logger` provides GoForge's structured logging layer. It configures a global
+`logger` provides forge-go's structured logging layer. It configures a global
 `slog` logger, formats entries as JSON, text, or a custom template, exports logs
 through OpenTelemetry, and includes Gin and gRPC middleware for request-scoped
 logs.

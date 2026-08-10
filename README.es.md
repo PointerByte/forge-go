@@ -1,6 +1,6 @@
-# GoForge
+# forge-go
 
-GoForge es un toolkit modular para arrancar aplicaciones de servicios en Go
+forge-go es un toolkit modular para arrancar aplicaciones de servicios en Go
 con convenciones compartidas para configuracion, transporte HTTP y gRPC,
 logging, OpenTelemetry, seguridad JWT, jobs en background y utilidades de
 runtime.
@@ -64,7 +64,7 @@ go install github.com/PointerByte/forge-go/cmd/go-openssl@latest
 
 ## Configuracion
 
-Las aplicaciones GoForge mantienen la configuracion de runtime en `resources/`.
+Las aplicaciones forge-go mantienen la configuracion de runtime en `resources/`.
 `tools/utilities.LoadEnv(prefixPath)` es el loader compartido de configuracion
 de runtime. Carga el archivo de aplicacion seleccionado en `viper`, mezcla
 archivos de entorno opcionales y aplica overrides desde variables de entorno
@@ -90,7 +90,7 @@ configuracion.
 - un valor vacio usa el directorio de trabajo actual
 - un directorio con `application.yml`, `application.yaml` o `application.json`
   se usa directamente
-- si no, GoForge sube desde `prefixPath` hasta encontrar la carpeta
+- si no, forge-go sube desde `prefixPath` hasta encontrar la carpeta
   `resources/` mas cercana con un archivo de aplicacion
 - si no encuentra una carpeta `resources/` en los padres, intenta
   `prefixPath/resources` para que el error apunte a la ubicacion esperada

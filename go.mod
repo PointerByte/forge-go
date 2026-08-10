@@ -32,9 +32,9 @@ require (
 )
 
 require (
-	github.com/PointerByte/forge-go/encrypt v0.0.1 // indirect
-	github.com/PointerByte/forge-go/logger v0.0.1
-	github.com/PointerByte/forge-go/security v0.0.1
+	github.com/PointerByte/forge-go/encrypt v0.0.3 // indirect
+	github.com/PointerByte/forge-go/logger v0.0.3
+	github.com/PointerByte/forge-go/security v0.0.3
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.2 // indirect
