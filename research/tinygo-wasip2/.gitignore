@@ -1,0 +1,5 @@
+/artifacts/
+/generated/
+/wit/deps/
+/wit/*.wasm
+/evidence/runtime-generated/

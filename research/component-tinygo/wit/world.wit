@@ -1,0 +1,34 @@
+package pointerbyte:goforge@0.1.0;
+
+/// The minimal versioned boundary around GoForge's canonical JSON/Base64 ABI.
+interface operations {
+  /// State observed by the host immediately before entering the guest.
+  /// Checked flags make deadline and cancellation controls fail closed.
+  record execution-state {
+    clock-checked: bool,
+    now-unix-milliseconds: s64,
+    cancellation-checked: bool,
+    cancellation-token: string,
+    cancellation-requested: bool,
+  }
+
+  /// Returns the canonical `goforge.manifest.v1` JSON document.
+  manifest: func() -> string;
+
+  /// Dispatches one canonical `goforge.abi.v1` JSON request and returns one
+  /// canonical `goforge.abi.v1` JSON response. Domain failures are responses,
+  /// not component traps.
+  dispatch: func(request-json: string, state: execution-state) -> string;
+}
+
+/// Identical export surface to the production world in `component/wit/world.wit`.
+///
+/// The only difference is the explicit `wasi:cli/imports` include: TinyGo's
+/// `wasip2` target links its runtime against WASI 0.2.0, whereas componentize-go
+/// resolves WASI 0.2.12 implicitly. `scripts/check-world.sh` proves the exported
+/// `operations` interface itself has not drifted from production, which is what
+/// the soak harnesses call.
+world goforge {
+  include wasi:cli/imports@0.2.0;
+  export operations;
+}

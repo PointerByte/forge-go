@@ -1,0 +1,6 @@
+/artifacts/
+/main.wasm
+/pointerbyte_goforge_poc_host/
+/pointerbyte_goforge_poc_operations/
+/wasi_*/
+/wit_*.go

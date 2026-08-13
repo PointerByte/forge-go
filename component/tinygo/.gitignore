@@ -1,0 +1,4 @@
+/generated/
+/wit/deps/
+/wit/*.wasm
+/tools/
