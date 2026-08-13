@@ -6,6 +6,6 @@ use (
 	./cmd/qgo
 	./encrypt
 	./logger
-	./portable
 	./security
+	./share/portable
 )

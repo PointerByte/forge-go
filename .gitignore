@@ -1,0 +1,8 @@
+**/.vscode
+**/logs
+**/coverage.html
+**/.gocache
+**/.idea
+**/.release
+.push.txt.kate-swp**/venv
+share/api-inventory/api-inventory
