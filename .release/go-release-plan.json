@@ -1,0 +1,169 @@
+{
+  "schema": "forge.go-release-plan.v1",
+  "generated_at_utc": "2026-08-19T04:48:05Z",
+  "project": "forge-go",
+  "module_base": "github.com/PointerByte/forge-go",
+  "public_remote": "https://github.com/PointerByte/forge-go.git",
+  "public_branch": "main",
+  "bump": "patch",
+  "prerelease_id": "rc",
+  "explicit_version": null,
+  "initial_version": "0.0.1",
+  "offline": false,
+  "graph_generated_at": "2026-08-19T04:47:58Z",
+  "seeds": [
+    "cmd/go-openssl",
+    "cmd/qgo",
+    "encrypt",
+    "logger",
+    "root",
+    "security"
+  ],
+  "closure": [
+    "cmd/go-openssl",
+    "cmd/qgo",
+    "encrypt",
+    "logger",
+    "root",
+    "security"
+  ],
+  "order": [
+    "cmd/go-openssl",
+    "cmd/qgo",
+    "logger",
+    "encrypt",
+    "security",
+    "root"
+  ],
+  "versions": [
+    {
+      "module": "cmd/go-openssl",
+      "module_path": "github.com/PointerByte/forge-go/cmd/go-openssl",
+      "current_version": "1.0.0",
+      "next_version": "1.0.1",
+      "version_origin": "bump:patch",
+      "next_tag": "cmd/go-openssl/v1.0.1"
+    },
+    {
+      "module": "cmd/qgo",
+      "module_path": "github.com/PointerByte/forge-go/cmd/qgo",
+      "current_version": "1.0.0",
+      "next_version": "1.0.1",
+      "version_origin": "bump:patch",
+      "next_tag": "cmd/qgo/v1.0.1"
+    },
+    {
+      "module": "logger",
+      "module_path": "github.com/PointerByte/forge-go/logger",
+      "current_version": "1.0.0",
+      "next_version": "1.0.1",
+      "version_origin": "bump:patch",
+      "next_tag": "logger/v1.0.1"
+    },
+    {
+      "module": "encrypt",
+      "module_path": "github.com/PointerByte/forge-go/encrypt",
+      "current_version": "1.0.0",
+      "next_version": "1.0.1",
+      "version_origin": "bump:patch",
+      "next_tag": "encrypt/v1.0.1"
+    },
+    {
+      "module": "security",
+      "module_path": "github.com/PointerByte/forge-go/security",
+      "current_version": "1.0.0",
+      "next_version": "1.0.1",
+      "version_origin": "bump:patch",
+      "next_tag": "security/v1.0.1"
+    },
+    {
+      "module": "root",
+      "module_path": "github.com/PointerByte/forge-go",
+      "current_version": "1.0.0",
+      "next_version": "1.0.1",
+      "version_origin": "bump:patch",
+      "next_tag": "v1.0.1"
+    }
+  ],
+  "go_mod_updates": [
+    {
+      "module": "encrypt",
+      "dir": "encrypt",
+      "requires": "github.com/PointerByte/forge-go/logger",
+      "from_version": "v1.0.0",
+      "indirect": false,
+      "to_version": "v1.0.1"
+    },
+    {
+      "module": "root",
+      "dir": ".",
+      "requires": "github.com/PointerByte/forge-go/encrypt",
+      "from_version": "v1.0.0",
+      "indirect": true,
+      "to_version": "v1.0.1"
+    },
+    {
+      "module": "root",
+      "dir": ".",
+      "requires": "github.com/PointerByte/forge-go/logger",
+      "from_version": "v1.0.0",
+      "indirect": false,
+      "to_version": "v1.0.1"
+    },
+    {
+      "module": "root",
+      "dir": ".",
+      "requires": "github.com/PointerByte/forge-go/security",
+      "from_version": "v1.0.0",
+      "indirect": false,
+      "to_version": "v1.0.1"
+    },
+    {
+      "module": "security",
+      "dir": "security",
+      "requires": "github.com/PointerByte/forge-go/encrypt",
+      "from_version": "v1.0.0",
+      "indirect": false,
+      "to_version": "v1.0.1"
+    },
+    {
+      "module": "security",
+      "dir": "security",
+      "requires": "github.com/PointerByte/forge-go/logger",
+      "from_version": "v1.0.0",
+      "indirect": true,
+      "to_version": "v1.0.1"
+    }
+  ],
+  "tags": [
+    {
+      "module": "cmd/go-openssl",
+      "tag": "cmd/go-openssl/v1.0.1"
+    },
+    {
+      "module": "cmd/qgo",
+      "tag": "cmd/qgo/v1.0.1"
+    },
+    {
+      "module": "logger",
+      "tag": "logger/v1.0.1"
+    },
+    {
+      "module": "encrypt",
+      "tag": "encrypt/v1.0.1"
+    },
+    {
+      "module": "security",
+      "tag": "security/v1.0.1"
+    },
+    {
+      "module": "root",
+      "tag": "v1.0.1"
+    }
+  ],
+  "source": {
+    "remote": "https://github.com/PointerByte/forge-go-private.git",
+    "branch": "main",
+    "sha": "6af3c6ae9ecb06398bdc82e95bbd80378922cc04"
+  }
+}

@@ -3,6 +3,6 @@
 **/coverage.html
 **/.gocache
 **/.idea
-**/.release
+**/.claude
 .push.txt.kate-swp**/venv
 share/api-inventory/api-inventory

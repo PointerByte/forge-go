@@ -87,10 +87,10 @@ configuration.
 `prefixPath` controls where configuration is searched:
 
 - an empty value uses the current working directory
-- a directory with `application.yml`, `application.yaml`, or `application.json`
-  is used directly
+- a directory with `application.yml`, `application.yaml`, `application.json`, or
+  `default.ini` is used directly
 - otherwise forge-go walks upward from `prefixPath` until it finds the nearest
-  `resources/` directory with an application file
+  `resources/` directory with one of those files
 - if no parent `resources/` directory is found, it tries `prefixPath/resources`
   so the missing file error points at the expected location
 
@@ -100,10 +100,10 @@ Inside the resolved configuration directory, it checks these files in order:
 2. `application.yaml`
 3. `application.json`
 
-After the application file is read, it merges the environment files declared in
-`env.files`. Relative file paths are resolved from the same directory as the
-selected application file. Environment overrides are generated from the existing
-configuration key path.
+After the application file is read, it merges the INI overlays described below,
+then the environment files declared in `env.files`. Relative file paths are
+resolved from the same directory as the selected application file. Environment
+overrides are generated from the existing configuration key path.
 
 ```yaml
 env:
@@ -115,6 +115,14 @@ env:
 This keeps local files, deployment variables, and framework defaults on the
 same `viper` instance, so Gin and gRPC behave consistently even when the
 binary is started from a nested directory such as `cmd/example`.
+
+Sources are applied in this order, each one overriding the previous:
+
+1. `application.yml`, `application.yaml`, or `application.json`
+2. `default.ini`
+3. `<app.name>.ini`
+4. the files listed in `env.files`
+5. process environment variables
 
 Examples:
 
@@ -185,6 +193,74 @@ jwt:
     private_key: ./certs/jwt/ed25519-key.pem
     public_key: ./certs/jwt/ed25519-public.pem
 ```
+
+### INI Files
+
+Configuration can also be written as INI. Two optional files in the resolved
+configuration directory are merged on top of the application file:
+
+1. `default.ini`, the shared overlay every project may provide
+2. `<app.name>.ini`, named after `app.name`
+
+A service created as `dragon-cmk` therefore reads `default.ini` first and
+`dragon-cmk.ini` second, so the project-specific file always wins. Both are
+optional. `APP_NAME` selects the second file when it is set, which lets a
+deployment pick its overlay the same way it overrides any other key.
+
+An application file is not required when a directory is configured through INI
+alone: a `resources/` directory holding only `default.ini` is a valid
+configuration directory. A missing `.ini` is ignored; a malformed one fails
+`LoadEnv` instead of leaving the application half-configured.
+
+```ini
+; resources/default.ini
+[app]
+name = dragon-cmk
+version = 0.0.1
+
+[server.gin]
+port = :8080
+mode = release
+readHeaderTimeout = 5s
+groups = [/api/v1, /api/v2]
+UseH2C = true
+
+[server.gin.rate]
+limit = 1000
+burst = 2000
+
+[logger]
+level = info
+formatter = json
+
+[traces]
+SkipPaths = /health
+SkipPaths = /metrics
+
+[jwt]
+enable = false
+algorithm = EDDSA
+```
+
+Section headers and dotted keys build the same key path, so `[server.gin]` with
+`port` and `[server]` with `gin.port` both set `server.gin.port`. An empty `[]`
+header returns to the root.
+
+Values are typed as follows:
+
+- a key the application file already declares keeps its type, so
+  `groups = /v2, /v3` stays a list and `limit = 2500` stays a number
+- a new key is inferred: `true` and `false` become booleans, digits become
+  numbers, and anything else stays a string
+- `[a, b, c]` declares a list explicitly, which is how a key the application
+  file does not declare becomes a list, single-element ones included, such as
+  `SkipPaths = [/health]`
+- repeating a key appends to a list, so `SkipPaths` above yields two entries
+- quoting a value with `"` or `'` keeps it a string and preserves its spaces
+
+Comments start with `;` or `#` at the beginning of a line, or after whitespace
+on an unquoted value. A marker that is not preceded by whitespace is part of the
+value, so `password = abc#123` is read in full.
 
 ## Main Configuration Keys
 

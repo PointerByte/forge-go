@@ -28,18 +28,20 @@ var configFileCandidates = []configFileCandidate{
 
 // LoadEnv resolves the GoForge runtime configuration directory and loads it
 // into Viper. If prefixPath is empty, the current working directory is used. If
-// prefixPath contains application.yml, application.yaml, or application.json
-// directly, that directory is used; otherwise LoadEnv walks upward looking for
-// the nearest resources/ directory with one of those files. When no matching
-// resources/ directory is found, it falls back to prefixPath/resources so the
-// returned read error points at the expected location.
+// prefixPath contains application.yml, application.yaml, application.json, or
+// default.ini directly, that directory is used; otherwise LoadEnv walks upward
+// looking for the nearest resources/ directory with one of those files. When no
+// matching resources/ directory is found, it falls back to prefixPath/resources
+// so the returned read error points at the expected location.
 //
-// Configuration is loaded in this order: application.yml, application.yaml, or
-// application.json; the environment files declared in env.files from the
-// selected application file; and finally process environment variable overrides
-// derived from the existing Viper key paths, for example app.name -> APP_NAME.
-// Missing .env files are ignored, but failure to read the selected application
-// file is returned.
+// Configuration is loaded in this order, each step overriding the previous one:
+// application.yml, application.yaml, or application.json; default.ini;
+// <app.name>.ini; the environment files declared in env.files; and finally
+// process environment variable overrides derived from the existing Viper key
+// paths, for example app.name -> APP_NAME. Missing .env and .ini files are
+// ignored, but a malformed .ini and a failure to read the selected application
+// file are returned. The application file becomes optional only when the
+// directory is configured through INI files alone.
 func LoadEnv(prefixPath string) error {
 	if prefixPath == "" {
 		dir, err := os.Getwd()
@@ -50,11 +52,20 @@ func LoadEnv(prefixPath string) error {
 	}
 
 	configDir := resolveConfigDir(prefixPath)
-	configFile, configType := resolveConfigFile(configDir)
 
-	viper.SetConfigFile(configFile)
-	viper.SetConfigType(configType)
-	if err := readInConfig(); err != nil {
+	// A project configured through INI files alone has no application file to
+	// read, and reporting one as missing would be wrong. Every other case keeps
+	// the original behavior, including the error that names application.json.
+	configFile, configType, found := resolveConfigFile(configDir)
+	if found || !hasINIConfig(configDir) {
+		viper.SetConfigFile(configFile)
+		viper.SetConfigType(configType)
+		if err := readInConfig(); err != nil {
+			return err
+		}
+	}
+
+	if err := loadINIFiles(configDir); err != nil {
 		return err
 	}
 
@@ -79,7 +90,7 @@ func loadEnvFiles(configDir string) {
 
 func resolveEnvFiles(configDir string) []string {
 	envFiles := make([]string, 0)
-	for _, envFile := range viper.GetStringSlice("env.files") {
+	for _, envFile := range envFileNames() {
 		envFile = strings.TrimSpace(envFile)
 		if envFile == "" {
 			continue
@@ -92,12 +103,22 @@ func resolveEnvFiles(configDir string) []string {
 	return envFiles
 }
 
+// envFileNames returns the env.files entries. A list is read as-is; a single
+// comma-separated string is split, which is the form an INI file produces for a
+// key no application file declared first.
+func envFileNames() []string {
+	if raw, ok := viper.Get("env.files").(string); ok {
+		return splitCommaSeparated(raw)
+	}
+	return viper.GetStringSlice("env.files")
+}
+
 func resolveConfigDir(prefixPath string) string {
 	if strings.TrimSpace(prefixPath) == "" {
 		prefixPath = "."
 	}
 
-	if hasApplicationConfig(prefixPath) {
+	if hasConfigFiles(prefixPath) {
 		return prefixPath
 	}
 
@@ -116,7 +137,7 @@ func findResourcesConfigDir(prefixPath string) string {
 
 	for {
 		configDir := filepath.Join(dir, resourcesDirName)
-		if hasApplicationConfig(configDir) {
+		if hasConfigFiles(configDir) {
 			return configDir
 		}
 
@@ -128,6 +149,12 @@ func findResourcesConfigDir(prefixPath string) string {
 	}
 }
 
+// hasConfigFiles reports whether dir is a usable configuration directory,
+// which an INI-only project satisfies without an application file.
+func hasConfigFiles(dir string) bool {
+	return hasApplicationConfig(dir) || hasINIConfig(dir)
+}
+
 func hasApplicationConfig(dir string) bool {
 	for _, candidate := range configFileCandidates {
 		if _, err := os.Stat(filepath.Join(dir, candidate.name)); err == nil {
@@ -137,14 +164,17 @@ func hasApplicationConfig(dir string) bool {
 	return false
 }
 
-func resolveConfigFile(dir string) (string, string) {
+// resolveConfigFile returns the application file to read and whether one
+// actually exists. The fallback keeps the read error pointing at
+// application.json when the directory holds no configuration at all.
+func resolveConfigFile(dir string) (string, string, bool) {
 	for _, candidate := range configFileCandidates {
 		configFile := filepath.Join(dir, candidate.name)
 		if _, err := os.Stat(configFile); err == nil {
-			return configFile, candidate.configType
+			return configFile, candidate.configType, true
 		}
 	}
-	return filepath.Join(dir, "application.json"), "json"
+	return filepath.Join(dir, "application.json"), "json", false
 }
 
 func exportMappedEnv() {

@@ -88,10 +88,10 @@ configuracion.
 `prefixPath` controla donde se busca la configuracion:
 
 - un valor vacio usa el directorio de trabajo actual
-- un directorio con `application.yml`, `application.yaml` o `application.json`
-  se usa directamente
+- un directorio con `application.yml`, `application.yaml`, `application.json` o
+  `default.ini` se usa directamente
 - si no, forge-go sube desde `prefixPath` hasta encontrar la carpeta
-  `resources/` mas cercana con un archivo de aplicacion
+  `resources/` mas cercana con alguno de esos archivos
 - si no encuentra una carpeta `resources/` en los padres, intenta
   `prefixPath/resources` para que el error apunte a la ubicacion esperada
 
@@ -101,10 +101,11 @@ Dentro del directorio de configuracion resuelto, busca estos archivos en orden:
 2. `application.yaml`
 3. `application.json`
 
-Despues de leer el archivo de aplicacion, mezcla los archivos de entorno
-declarados en `env.files`. Las rutas relativas se resuelven desde el mismo
-directorio del archivo de aplicacion seleccionado. Los overrides por entorno se
-generan desde la ruta de claves ya existente en la configuracion.
+Despues de leer el archivo de aplicacion, mezcla los archivos INI descritos mas
+abajo y luego los archivos de entorno declarados en `env.files`. Las rutas
+relativas se resuelven desde el mismo directorio del archivo de aplicacion
+seleccionado. Los overrides por entorno se generan desde la ruta de claves ya
+existente en la configuracion.
 
 ```yaml
 env:
@@ -117,6 +118,14 @@ Esto mantiene archivos locales, variables de despliegue y defaults del
 framework en la misma instancia de `viper`, para que Gin y gRPC se comporten de
 forma consistente incluso cuando el binario se inicia desde un directorio
 anidado como `cmd/example`.
+
+Las fuentes se aplican en este orden, cada una sobrescribiendo a la anterior:
+
+1. `application.yml`, `application.yaml` o `application.json`
+2. `default.ini`
+3. `<app.name>.ini`
+4. los archivos listados en `env.files`
+5. variables de entorno del proceso
 
 Ejemplos:
 
@@ -187,6 +196,77 @@ jwt:
     private_key: ./certs/jwt/ed25519-key.pem
     public_key: ./certs/jwt/ed25519-public.pem
 ```
+
+### Archivos INI
+
+La configuracion tambien puede escribirse en INI. Dos archivos opcionales del
+directorio de configuracion resuelto se mezclan sobre el archivo de aplicacion:
+
+1. `default.ini`, el overlay compartido que cualquier proyecto puede aportar
+2. `<app.name>.ini`, con el nombre de `app.name`
+
+Un servicio creado como `dragon-cmk` lee entonces primero `default.ini` y
+despues `dragon-cmk.ini`, asi que el archivo especifico del proyecto siempre
+gana. Ambos son opcionales. `APP_NAME` selecciona el segundo archivo cuando esta
+definida, lo que permite que un despliegue elija su overlay igual que
+sobrescribe cualquier otra clave.
+
+No hace falta un archivo de aplicacion cuando el directorio se configura solo
+con INI: una carpeta `resources/` que unicamente tiene `default.ini` es un
+directorio de configuracion valido. Un `.ini` ausente se ignora; uno mal formado
+hace fallar a `LoadEnv` en vez de dejar la aplicacion a medio configurar.
+
+```ini
+; resources/default.ini
+[app]
+name = dragon-cmk
+version = 0.0.1
+
+[server.gin]
+port = :8080
+mode = release
+readHeaderTimeout = 5s
+groups = [/api/v1, /api/v2]
+UseH2C = true
+
+[server.gin.rate]
+limit = 1000
+burst = 2000
+
+[logger]
+level = info
+formatter = json
+
+[traces]
+SkipPaths = /health
+SkipPaths = /metrics
+
+[jwt]
+enable = false
+algorithm = EDDSA
+```
+
+Los encabezados de seccion y las claves con puntos construyen la misma ruta, asi
+que `[server.gin]` con `port` y `[server]` con `gin.port` definen ambos
+`server.gin.port`. Un encabezado vacio `[]` vuelve a la raiz.
+
+Los valores se tipan asi:
+
+- una clave que el archivo de aplicacion ya declara conserva su tipo, por eso
+  `groups = /v2, /v3` sigue siendo lista y `limit = 2500` sigue siendo numero
+- una clave nueva se infiere: `true` y `false` pasan a booleano, los digitos a
+  numero y el resto queda como texto
+- `[a, b, c]` declara una lista de forma explicita, que es como una clave que
+  el archivo de aplicacion no declara pasa a ser lista, incluidas las de un solo
+  elemento como `SkipPaths = [/health]`
+- repetir una clave agrega a una lista, por eso `SkipPaths` arriba da dos
+  entradas
+- entrecomillar un valor con `"` o `'` lo mantiene como texto y conserva sus
+  espacios
+
+Los comentarios empiezan con `;` o `#` al inicio de una linea, o despues de un
+espacio en un valor sin comillas. Un marcador que no viene precedido de espacio
+es parte del valor, por eso `password = abc#123` se lee completo.
 
 ## Claves Principales
 
