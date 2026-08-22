@@ -15,6 +15,7 @@ import (
 	viperdata "github.com/PointerByte/forge-go/logger/viperData"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -23,7 +24,7 @@ import (
 // otelLogEnvKeys drive log export. Every case clears all of them and then sets
 // only what it declares, so the surrounding process environment cannot change
 // the outcome.
-var otelLogEnvKeys = []string{logsExporterEnv, logsProtocolEnv, otlpProtocolEnv}
+var otelLogEnvKeys = []string{logsExporterEnv, logsProtocolEnv, otlpProtocolEnv, sdkDisabledEnv}
 
 func withOtelLogEnv(t *testing.T, env map[string]string) {
 	t.Helper()
@@ -158,15 +159,17 @@ func Test_signalProtocol(t *testing.T) {
 
 func Test_newCofigLoggerProvider(t *testing.T) {
 	origNew := new
+	origNewGRPC := newGRPC
 	origNewLoggerProvider := newLoggerProvider
-	origResourceDefault := resourceDefault
+	origResourceNew := resourceNewFn
 	origResourceNewWithAttributes := newSchemaless
 	origResourceMerge := resourceMerge
 
 	defer func() {
 		new = origNew
+		newGRPC = origNewGRPC
 		newLoggerProvider = origNewLoggerProvider
-		resourceDefault = origResourceDefault
+		resourceNewFn = origResourceNew
 		newSchemaless = origResourceNewWithAttributes
 		resourceMerge = origResourceMerge
 	}()
@@ -228,13 +231,31 @@ func Test_newCofigLoggerProvider(t *testing.T) {
 			wantProviderOpts: providerNotCalled,
 		},
 		{
-			name: "unsupported protocol value",
+			name: "otlp accepts an explicit grpc protocol",
 			env: map[string]string{
 				logsExporterEnv: "otlp",
 				logsProtocolEnv: "grpc",
 			},
+			wantEnabled:       true,
+			wantExporterCalls: 1,
+			wantProviderOpts:  2,
+		},
+		{
+			name: "unsupported protocol value",
+			env: map[string]string{
+				logsExporterEnv: "otlp",
+				logsProtocolEnv: "http/json",
+			},
 			wantErrContains:  logsProtocolEnv,
 			wantProviderOpts: providerNotCalled,
+		},
+		{
+			name: "sdk disabled turns log export off",
+			env: map[string]string{
+				logsExporterEnv: "otlp",
+				sdkDisabledEnv:  "true",
+			},
+			wantProviderOpts: 0,
 		},
 		{
 			name:              "exporter constructor error",
@@ -271,8 +292,15 @@ func Test_newCofigLoggerProvider(t *testing.T) {
 				}
 				return &otlploghttp.Exporter{}, nil
 			}
-			resourceDefault = func() *resource.Resource {
-				return resource.Empty()
+			newGRPC = func(ctx context.Context, opts ...otlploggrpc.Option) (*otlploggrpc.Exporter, error) {
+				exporterCalls++
+				if tt.exporterErr {
+					return nil, errors.New("exporter error")
+				}
+				return &otlploggrpc.Exporter{}, nil
+			}
+			resourceNewFn = func(context.Context, ...resource.Option) (*resource.Resource, error) {
+				return resource.Empty(), nil
 			}
 			newSchemaless = func(attrs ...attribute.KeyValue) *resource.Resource {
 				return resource.Empty()

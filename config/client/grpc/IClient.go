@@ -21,8 +21,8 @@ import (
 	"github.com/PointerByte/forge-go/logger/builder"
 	"github.com/PointerByte/forge-go/logger/common"
 	"github.com/PointerByte/forge-go/logger/formatter"
+	"github.com/PointerByte/forge-go/tools/utilities/traces"
 	"github.com/spf13/viper"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -291,11 +291,16 @@ func buildService(service *formatter.Process, reqBody, object any, method, targe
 	return nil
 }
 
+// defaultTraceDialOptions installs the official OpenTelemetry gRPC client
+// instrumentation as the single tracing owner of the outbound RPC boundary —
+// one SpanKindClient span per call, current RPC semantic conventions, and W3C
+// context injected into the outgoing metadata — plus the Forge interceptors
+// that own the separate concern of structured request logging.
 func defaultTraceDialOptions() []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(traceUnaryClientInterceptor()),
 		grpc.WithChainStreamInterceptor(traceStreamClientInterceptor()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithStatsHandler(traces.StatsHandlerOtelGRPCClient()),
 	}
 }
 

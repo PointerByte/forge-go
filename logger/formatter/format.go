@@ -23,7 +23,10 @@ type CustomFormatter struct {
 	Template string
 }
 
-const defaultJSONTemplate = `{"timestamp":{{json .Timestamp}},"traceID":{{json .TraceID}},"level":{{json .Level}},"message":{{json .Message}},"details":{{json (buildDetails .Details)}},"process":{{json (buildServices .Process)}}{{if .Attributes}},"attributes":{{json .Attributes}}{{end}},"method":{{json .Method}},"line":{{json .Line}},"latency":{{json .Latency}}}`
+// defaultJSONTemplate emits spanID only when a span was active. An entry logged
+// with telemetry disabled keeps exactly the shape it had before span
+// correlation existed.
+const defaultJSONTemplate = `{"timestamp":{{json .Timestamp}},"traceID":{{json .TraceID}}{{if .SpanID}},"spanID":{{json .SpanID}}{{end}},"level":{{json .Level}},"message":{{json .Message}},"details":{{json (buildDetails .Details)}},"process":{{json (buildServices .Process)}}{{if .Attributes}},"attributes":{{json .Attributes}}{{end}},"method":{{json .Method}},"line":{{json .Line}},"latency":{{json .Latency}}}`
 
 func (f *CustomFormatter) Format(log LogFormat) ([]byte, error) {
 	log = log.Normalize()
@@ -43,12 +46,16 @@ func (f *CustomFormatter) FormatJSON(log LogFormat) ([]byte, error) {
 
 func (f *CustomFormatter) FormatText(log LogFormat) ([]byte, error) {
 	var b strings.Builder
+	traceRef := log.TraceID
+	if log.SpanID != "" {
+		traceRef += "/" + log.SpanID
+	}
 	fmt.Fprintf(
 		&b,
 		"[%s] [%v] [%s] %s:%d - %s",
 		log.Timestamp,
 		log.Level,
-		log.TraceID,
+		traceRef,
 		log.Method,
 		log.Line,
 		log.Message,

@@ -115,8 +115,8 @@ var tlsConfig *tls.Config
 // ConfigOption customizes internally created gRPC servers.
 type ConfigOption func(*Config)
 
-// WithUnaryInterceptors appends unary interceptors to the default traces and
-// logger interceptor chain.
+// WithUnaryInterceptors appends unary interceptors to the default logger
+// interceptor chain.
 func WithUnaryInterceptors(interceptors ...grpc.UnaryServerInterceptor) ConfigOption {
 	return func(config *Config) {
 		for _, interceptor := range interceptors {
@@ -127,8 +127,8 @@ func WithUnaryInterceptors(interceptors ...grpc.UnaryServerInterceptor) ConfigOp
 	}
 }
 
-// WithStreamInterceptors appends stream interceptors to the default traces and
-// logger interceptor chain.
+// WithStreamInterceptors appends stream interceptors to the default logger
+// interceptor chain.
 func WithStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) ConfigOption {
 	return func(config *Config) {
 		for _, interceptor := range interceptors {
@@ -155,7 +155,8 @@ func SetTLSConfig(config *tls.Config) {
 // handing execution to this package.
 //
 // If server is nil, the function creates a default grpc.Server with the
-// package interceptors for traces and logging.
+// official OpenTelemetry gRPC stats handler for tracing and metrics, plus the
+// package interceptors for rate limiting and logging.
 //
 // If server is not nil, that instance is used as-is and its existing
 // configuration is preserved.
@@ -481,7 +482,6 @@ func (su *Config) defaultServerOptions() ([]grpc.ServerOption, error) {
 	rateLimiter := newGRPCRateLimiter()
 	unaryInterceptors := []grpc.UnaryServerInterceptor{
 		rateLimitUnaryInterceptor(rateLimiter),
-		traces.MiddlewareOtelGRPCUnary(),
 		loggerGRPCMiddlewares.InitLoggerUnaryServerInterceptor(),
 		loggerGRPCMiddlewares.LoggerWithConfigUnaryServerInterceptor(),
 		loggerGRPCMiddlewares.CaptureBodyUnaryServerInterceptor(),
@@ -490,14 +490,19 @@ func (su *Config) defaultServerOptions() ([]grpc.ServerOption, error) {
 
 	streamInterceptors := []grpc.StreamServerInterceptor{
 		rateLimitStreamInterceptor(rateLimiter),
-		traces.MiddlewareOtelGRPCStream(),
 		loggerGRPCMiddlewares.InitLoggerStreamServerInterceptor(),
 		loggerGRPCMiddlewares.LoggerWithConfigStreamServerInterceptor(),
 		loggerGRPCMiddlewares.CaptureBodyStreamServerInterceptor(),
 	}
 	streamInterceptors = append(streamInterceptors, su.streamInterceptors...)
 
+	// The official OpenTelemetry instrumentation is the single tracing owner of
+	// this boundary: it opens exactly one server span per RPC, records the
+	// current RPC semantic conventions and the rpc.server.* metrics. The logger
+	// interceptors below adopt that span instead of starting their own, so one
+	// RPC never yields two server spans.
 	options := []grpc.ServerOption{
+		grpc.StatsHandler(traces.StatsHandlerOtelGRPCServer()),
 		grpc.ChainUnaryInterceptor(unaryInterceptors...),
 		grpc.ChainStreamInterceptor(streamInterceptors...),
 	}

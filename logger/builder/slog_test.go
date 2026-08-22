@@ -356,7 +356,7 @@ func TestJSONHandler_Handle_SanitizesConfiguredKeysBeforeFormatting(t *testing.T
 			ctx := newTestCtx()
 			ctx.Set(detailsKey, formatter.Details{
 				System:          "loan-service",
-				Request:         map[string]any{"password": "secret", "token": "visible"},
+				Request:         map[string]any{"password": "secret", "colour": "visible"},
 				Response:        `{"email":"person@example.com`,
 				ResponseCapture: &formatter.BodyCaptureMetadata{Truncated: true, CapturedBytes: 29, LimitBytes: 29},
 			})
@@ -376,7 +376,7 @@ func TestJSONHandler_Handle_SanitizesConfiguredKeysBeforeFormatting(t *testing.T
 				t.Fatalf("output missing redaction marker: %s", out)
 			}
 			if !strings.Contains(out, "visible") {
-				t.Fatalf("disabled sensitive key was redacted unexpectedly: %s", out)
+				t.Fatalf("a non-sensitive key was redacted unexpectedly: %s", out)
 			}
 		})
 	}

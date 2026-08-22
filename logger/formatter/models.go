@@ -17,6 +17,7 @@ type LogFormat struct {
 	Level      Level          `json:"level"`
 	Timestamp  string         `json:"timestamp"`
 	TraceID    string         `json:"traceID"`
+	SpanID     string         `json:"spanID,omitempty"`
 	Message    string         `json:"message"`
 	Details    Details        `json:"details"`
 	Process    []Process      `json:"process"`

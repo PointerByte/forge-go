@@ -95,17 +95,24 @@ func (s *grpcCaptureStream) responseCapture() *grpcBodyCapture {
 // InitLoggerUnaryServerInterceptor creates the request-scoped logger context
 // for unary gRPC calls.
 //
-// It extracts any incoming distributed-tracing headers from gRPC metadata,
-// starts the logger span, attaches the base gRPC metadata used by structured
-// logs, and passes the enriched context to the next handler.
+// It attaches the base gRPC metadata used by structured logs and passes the
+// enriched context to the next handler.
+//
+// Tracing ownership: this interceptor never creates a second server span. When
+// the official otelgrpc stats handler (or any equivalent instrumentation)
+// already owns the RPC boundary, the context carries the server span and the
+// logger only adopts its trace and span ids. It extracts the incoming context
+// and starts a span itself only when nothing else has, so the logger stays
+// usable standalone without producing duplicate spans for one RPC.
 func InitLoggerUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		parent := extractGRPCContext(ctx)
-		ctxLogger, span := newGRPCLoggerContext(parent, ctx)
+		ctxLogger, span, ownsSpan := newGRPCLoggerContext(ctx)
 		if info != nil {
 			setGRPCMethodDetails(builder.New(ctxLogger), info.FullMethod)
 		}
-		defer span.End()
+		if ownsSpan {
+			defer span.End()
+		}
 		return handler(ctxLogger, req)
 	}
 }
@@ -118,12 +125,13 @@ func InitLoggerUnaryServerInterceptor() grpc.UnaryServerInterceptor {
 // stream.Context().
 func InitLoggerStreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		parent := extractGRPCContext(stream.Context())
-		ctxLogger, span := newGRPCLoggerContext(parent, stream.Context())
+		ctxLogger, span, ownsSpan := newGRPCLoggerContext(stream.Context())
 		if info != nil {
 			setGRPCMethodDetails(builder.New(ctxLogger), info.FullMethod)
 		}
-		defer span.End()
+		if ownsSpan {
+			defer span.End()
+		}
 
 		return handler(srv, &grpcContextStream{
 			ServerStream: stream,
@@ -281,29 +289,24 @@ func extractGRPCContext(ctx context.Context) context.Context {
 	return otel.GetTextMapPropagator().Extract(ctx, grpcMetadataCarrier(md.Copy()))
 }
 
-func newGRPCLoggerContext(parent context.Context, incoming context.Context) (context.Context, trace.Span) {
+func newGRPCLoggerContext(incoming context.Context) (context.Context, trace.Span, bool) {
+	parent, span, ownsSpan := serverSpanContext(incoming)
 	ctxLogger := builder.New(parent)
 	appName := viperdata.GetViperData(string(viperdata.AppAtribute)).(string)
-	tracer := otel.Tracer(appName)
 
-	var span trace.Span
-	ctxLogger.Context, span = tracer.Start(
-		ctxLogger.Context,
-		appName,
-		trace.WithSpanKind(trace.SpanKindServer),
-	)
-
+	// A real trace wins over the legacy correlation metadata entry: a
+	// structured log must be reachable from the span it was emitted under. The
+	// metadata value is honoured only when no span context is available.
 	traceID := ""
-	if md, ok := metadata.FromIncomingContext(incoming); ok {
-		values := md.Get(strings.ToLower(common.TraceIDHeader))
-		if len(values) > 0 {
-			traceID = values[0]
-		}
+	if spanContext := span.SpanContext(); spanContext.IsValid() {
+		traceID = spanContext.TraceID().String()
+		ctxLogger.SetSpanID(spanContext.SpanID().String())
 	}
 	if traceID == "" {
-		otelTraceID := span.SpanContext().TraceID()
-		if otelTraceID.IsValid() {
-			traceID = otelTraceID.String()
+		if md, ok := metadata.FromIncomingContext(incoming); ok {
+			if values := md.Get(strings.ToLower(common.TraceIDHeader)); len(values) > 0 {
+				traceID = values[0]
+			}
 		}
 	}
 	if traceID != "" {
@@ -323,7 +326,30 @@ func newGRPCLoggerContext(parent context.Context, incoming context.Context) (con
 
 	ctxLogger.Details = details
 	ctxLogger.Set(common.DetailsKey, details)
-	return ctxLogger, span
+	return ctxLogger, span, ownsSpan
+}
+
+// serverSpanContext returns the context the logger must build on, the span that
+// represents the RPC, and whether this interceptor started that span and is
+// therefore responsible for ending it.
+//
+// A span already present in the context was started in this process by whoever
+// owns the RPC boundary. Re-extracting the remote context on top of it would
+// detach the logger from that span and produce a sibling root, so the
+// extraction happens only when there is nothing to adopt.
+func serverSpanContext(incoming context.Context) (context.Context, trace.Span, bool) {
+	if spanContext := trace.SpanContextFromContext(incoming); spanContext.IsValid() && !spanContext.IsRemote() {
+		return incoming, trace.SpanFromContext(incoming), false
+	}
+
+	parent := extractGRPCContext(incoming)
+	appName := viperdata.GetViperData(string(viperdata.AppAtribute)).(string)
+	ctx, span := otel.Tracer(common.InstrumentationName).Start(
+		parent,
+		appName,
+		trace.WithSpanKind(trace.SpanKindServer),
+	)
+	return ctx, span, true
 }
 
 func metadataToHTTPHeader(md metadata.MD) http.Header {

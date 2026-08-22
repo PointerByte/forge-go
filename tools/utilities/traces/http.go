@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -34,10 +35,17 @@ import (
 	otelprometheus "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
+// instrumentationName is the instrumentation scope reported by every tracer and
+// meter this package creates. It identifies Forge as the instrumentation
+// library, which is what an OpenTelemetry scope is for; the service identity
+// travels in the resource, not in the scope.
+const instrumentationName = "github.com/PointerByte/forge-go/tools/utilities/traces"
+
 var (
+	initOtelFn              = InitOtel
 	autoTracerProviderFn    = autosdk.TracerProvider
 	initResourceFn          = newResource
 	initTracerProviderFn    = newTracerProvider
@@ -52,16 +60,42 @@ var (
 	prometheusExporterNewFn = otelprometheus.New
 )
 
+// initMu serializes InitOtel so a repeated initialization cannot interleave
+// with itself, and previousShutdown holds the shutdown of the pipeline this
+// package installed last.
+var (
+	initMu           sync.Mutex
+	previousShutdown func(context.Context) error
+)
+
 // InitOtel initializes the global OpenTelemetry propagator, tracer provider,
 // and meter provider.
 //
 // Behavior is driven mainly by standard OTEL_* environment variables. When
-// OTEL_SDK_DISABLED is true, the package
-// installs no-op providers and returns a shutdown function that does nothing.
+// OTEL_SDK_DISABLED is true, the package installs no-op providers and returns a
+// shutdown function that does nothing.
+//
+// Calling InitOtel again replaces the pipeline: the providers installed by the
+// previous call are shut down first, using ctx, so a repeated initialization
+// cannot leak exporters or leave two batch processors running. The returned
+// shutdown function is idempotent — calling it more than once is safe and
+// returns the result of the first call.
 //
 // On success it returns a shutdown function that must be called during
-// application shutdown to flush and release tracing and metrics resources.
+// application shutdown to flush and release tracing and metrics resources. It
+// respects the deadline of the context it is given, so an unreachable collector
+// cannot block shutdown indefinitely.
 func InitOtel(ctx context.Context) (func(context.Context) error, error) {
+	initMu.Lock()
+	defer initMu.Unlock()
+
+	// Replacing the globals without draining the previous pipeline would leak
+	// its exporter and its batch processor goroutine.
+	if previousShutdown != nil {
+		_ = previousShutdown(ctx)
+		previousShutdown = nil
+	}
+
 	otel.SetTextMapPropagator(newPropagator())
 
 	if isEnvTrue("OTEL_SDK_DISABLED") {
@@ -75,32 +109,56 @@ func InitOtel(ctx context.Context) (func(context.Context) error, error) {
 		return nil, err
 	}
 
-	shutdowns := make([]func(context.Context) error, 0, 2)
 	tp, shutdownTrace, err := initTracerProviderFn(ctx, res)
 	if err != nil {
 		return nil, err
 	}
 	otel.SetTracerProvider(tp)
+
+	mp, shutdownMetrics, err := initMeterProviderFn(ctx, res)
+	if err != nil {
+		// The tracer provider is already installed; drain it rather than
+		// leaving a half-initialized pipeline behind.
+		if shutdownTrace != nil {
+			err = errors.Join(err, shutdownTrace(ctx))
+		}
+		return nil, err
+	}
+	otel.SetMeterProvider(mp)
+
+	// Metrics before traces: the recommended flush order is
+	// logs -> metrics -> traces, and logs are owned by the logger module.
+	// InitTelemetry composes the three signals in that order.
+	shutdowns := make([]func(context.Context) error, 0, 2)
+	if shutdownMetrics != nil {
+		shutdowns = append(shutdowns, shutdownMetrics)
+	}
 	if shutdownTrace != nil {
 		shutdowns = append(shutdowns, shutdownTrace)
 	}
 
-	mp, shutdownMetrics, err := initMeterProviderFn(ctx, res)
-	if err != nil {
-		return nil, err
-	}
-	otel.SetMeterProvider(mp)
-	if shutdownMetrics != nil {
-		shutdowns = append(shutdowns, shutdownMetrics)
-	}
-
-	return func(ctx context.Context) error {
+	shutdown := onceShutdown(func(ctx context.Context) error {
 		var err error
 		for _, shutdown := range shutdowns {
 			err = errors.Join(err, shutdown(ctx))
 		}
 		return err
-	}, nil
+	})
+	previousShutdown = shutdown
+	return shutdown, nil
+}
+
+// onceShutdown wraps a shutdown function so repeated calls are safe and return
+// the outcome of the first one.
+func onceShutdown(shutdown func(context.Context) error) func(context.Context) error {
+	var (
+		once sync.Once
+		err  error
+	)
+	return func(ctx context.Context) error {
+		once.Do(func() { err = shutdown(ctx) })
+		return err
+	}
 }
 
 // MiddlewareOtel returns a Gin middleware that instruments incoming HTTP
@@ -123,12 +181,6 @@ func MiddlewareOtel() gin.HandlerFunc {
 				}
 			}
 			return true
-		}),
-		otelgin.WithGinMetricAttributeFn(func(c *gin.Context) []attribute.KeyValue {
-			return []attribute.KeyValue{
-				attribute.String("route", c.FullPath()),
-				attribute.String("method", c.Request.Method),
-			}
 		}),
 	)
 }

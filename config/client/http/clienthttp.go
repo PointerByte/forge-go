@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 )
 
 var (
@@ -54,9 +56,30 @@ func NewRestClientFromConfig() (*http.Client, error) {
 func newRestClient(timeout time.Duration, tr *http.Transport) (*http.Client, error) {
 	resolvedTransport, err := resolveTransport(tr)
 	return &http.Client{
-		Transport: resolvedTransport,
+		Transport: instrumentedTransport(resolvedTransport),
 		Timeout:   timeout,
 	}, err
+}
+
+// instrumentedTransport wraps a transport with the official OpenTelemetry HTTP
+// client instrumentation.
+//
+// It is the single tracing owner of the outbound HTTP boundary: it opens one
+// SpanKindClient span per request, records the current HTTP semantic
+// conventions, and injects the W3C trace context into the outgoing headers so
+// the callee continues the same distributed trace. Its metrics are keyed by
+// method, status and server address only, never by the raw URL, which keeps the
+// client metric cardinality bounded.
+//
+// With telemetry disabled the global providers are no-ops and the propagator
+// has nothing valid to inject, so the wrapper stays inert.
+func instrumentedTransport(transport http.RoundTripper) http.RoundTripper {
+	return otelhttp.NewTransport(
+		transport,
+		otelhttp.WithTracerProvider(otel.GetTracerProvider()),
+		otelhttp.WithMeterProvider(otel.GetMeterProvider()),
+		otelhttp.WithPropagators(otel.GetTextMapPropagator()),
+	)
 }
 
 func resolveTransport(tr *http.Transport) (*http.Transport, error) {

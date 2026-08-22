@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
 
 	"github.com/PointerByte/forge-go/logger/builder"
 	"github.com/PointerByte/forge-go/logger/common"
@@ -19,47 +20,45 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// InitLogger creates or reuses the request-scoped logger context,
-// extracts distributed-tracing headers, starts the server span, and stores the
+// InitLogger creates or reuses the request-scoped logger context and stores the
 // base HTTP metadata that will later be used in structured logs.
+//
+// Tracing ownership: this middleware never creates a second server span. When
+// another OpenTelemetry instrumentation already owns the HTTP boundary — the
+// otelgin middleware installed by tools/utilities/traces, or any equivalent —
+// the request context already carries the server span, and the logger simply
+// adopts its trace and span ids. Only when nothing has opened a span does the
+// middleware extract the incoming W3C context and start one itself, so the
+// logger stays usable standalone without ever producing duplicate spans for a
+// single request.
 func InitLogger() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// ---- contexto base del request ----
-		parent := otel.GetTextMapPropagator().Extract(
-			ctx.Request.Context(),
-			propagation.HeaderCarrier(ctx.Request.Header),
-		)
-
 		// ---- Default disable request and response bodies ----
 		ctx.Set(common.DisableRequestBodyKey, true)
 		ctx.Set(common.DisableResponseBodyKey, true)
 
-		// ---- Create logger context with span ----
+		// ---- Create logger context, owning the span only if nobody else does ----
+		parent, span, ownsSpan := serverSpanContext(ctx.Request)
 		ctxLogger := builder.New(parent)
-		appName := viperdata.GetViperData(string(viperdata.AppAtribute)).(string)
-		tracer := otel.Tracer(appName)
-
-		var span trace.Span
-		ctxLogger.Context, span = tracer.Start(
-			ctxLogger.Context,
-			appName,
-			trace.WithSpanKind(trace.SpanKindServer),
-		)
 
 		// ---- Get TraceID ----
-		traceID := ctx.Request.Header.Get(common.TraceIDHeader)
+		// A real trace wins over the legacy correlation header: a structured
+		// log must be reachable from the span it was emitted under. The header
+		// is honoured only when no span context is available.
+		traceID := ""
+		if spanContext := span.SpanContext(); spanContext.IsValid() {
+			traceID = spanContext.TraceID().String()
+			ctxLogger.SetSpanID(spanContext.SpanID().String())
+		}
 		if traceID == "" {
-			otelTraceID := span.SpanContext().TraceID()
-			if otelTraceID.IsValid() {
-				traceID = otelTraceID.String()
-			}
+			traceID = ctx.Request.Header.Get(common.TraceIDHeader)
 		}
 		if traceID != "" {
 			ctxLogger.SetTraceID(traceID)
 		}
 
 		details := formatter.Details{
-			System:   appName,
+			System:   viperdata.GetViperData(string(viperdata.AppAtribute)).(string),
 			Client:   ctx.ClientIP(),
 			Protocol: ctx.Request.Proto,
 			Method:   ctx.Request.Method,
@@ -75,8 +74,34 @@ func InitLogger() gin.HandlerFunc {
 		ctx.Next()
 
 		// ---- cerrar span al final del request ----
-		span.End()
+		if ownsSpan {
+			span.End()
+		}
 	}
+}
+
+// serverSpanContext returns the context the logger must build on, the span that
+// represents the request, and whether this middleware started that span and is
+// therefore responsible for ending it.
+//
+// A span already present in the request context was started in this process by
+// whoever owns the HTTP boundary. Re-extracting the remote context on top of it
+// would detach the logger from that span and produce a sibling root, so the
+// extraction happens only when there is nothing to adopt.
+func serverSpanContext(request *http.Request) (context.Context, trace.Span, bool) {
+	ctx := request.Context()
+	if spanContext := trace.SpanContextFromContext(ctx); spanContext.IsValid() && !spanContext.IsRemote() {
+		return ctx, trace.SpanFromContext(ctx), false
+	}
+
+	parent := otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(request.Header))
+	appName := viperdata.GetViperData(string(viperdata.AppAtribute)).(string)
+	ctx, span := otel.Tracer(common.InstrumentationName).Start(
+		parent,
+		appName,
+		trace.WithSpanKind(trace.SpanKindServer),
+	)
+	return ctx, span, true
 }
 
 type responseBodyWriter struct {

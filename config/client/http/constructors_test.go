@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // failTLSConfig makes resolveTLSConfig fail so the error-returning constructors
@@ -71,9 +72,13 @@ func TestNewConfiguredIRest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewConfiguredIRest() error = %v", err)
 		}
-		resolved, ok := client.(*Rest).restClient.Transport.(*http.Transport)
-		if !ok {
-			t.Fatalf("transport = %T, want *http.Transport", client.(*Rest).restClient.Transport)
+		if _, ok := client.(*Rest).restClient.Transport.(*otelhttp.Transport); !ok {
+			t.Fatalf("transport = %T, want *otelhttp.Transport", client.(*Rest).restClient.Transport)
+		}
+
+		resolved, err := resolveTransport(transport)
+		if err != nil {
+			t.Fatalf("resolveTransport() error = %v", err)
 		}
 		if resolved == transport {
 			t.Fatal("transport was not cloned")

@@ -7,6 +7,7 @@ type keyContex string
 
 const (
 	traceIDKey  keyContex = "traceID"
+	spanIDKey   keyContex = "spanID"
 	detailsKey  keyContex = "details"
 	servicesKey keyContex = "services"
 )

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func resetHTTPClientTestState(t *testing.T) {
@@ -63,10 +64,11 @@ func TestRestClient(t *testing.T) {
 		t.Fatalf("RestClient() returned nil client")
 	}
 
-	// Transport debe ser *http.Transport
-	tr, ok := got.Transport.(*http.Transport)
-	if !ok || tr == nil {
-		t.Fatalf("client.Transport = %#v, want *http.Transport", got.Transport)
+	// The transport must be the OpenTelemetry client instrumentation wrapping
+	// the resolved *http.Transport, so every outbound request carries a client
+	// span and the W3C trace context.
+	if _, ok := got.Transport.(*otelhttp.Transport); !ok {
+		t.Fatalf("client.Transport = %T, want *otelhttp.Transport", got.Transport)
 	}
 }
 

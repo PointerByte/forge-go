@@ -12,7 +12,6 @@ import (
 
 	"github.com/PointerByte/forge-go/logger/common"
 	"github.com/PointerByte/forge-go/logger/formatter"
-	viperdata "github.com/PointerByte/forge-go/logger/viperData"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -76,17 +75,22 @@ func New(parent context.Context) *Context {
 		return existing
 	}
 
-	appName := viperdata.GetViperData(string(viperdata.AppAtribute)).(string)
 	newContext := &Context{
 		Context:   parent,
 		startTime: time.Now(),
 		fields:    &sync.Map{},
-		tracer:    otel.Tracer(appName),
+		tracer:    otel.Tracer(instrumentationName),
 	}
 
-	// Initialize traceID
-	traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
-	newContext.SetTraceID(traceID)
+	// Initialize the correlation ids from the active trace when there is one,
+	// so a structured log and the span it was emitted under carry the same
+	// identifiers. Only when no span is recording does the logger fall back to
+	// a generated correlation id, which keeps logging usable with telemetry
+	// disabled without ever inventing a trace id that no exporter has seen.
+	newContext.adoptSpanContext(trace.SpanContextFromContext(parent))
+	if newContext.TraceID() == "" {
+		newContext.SetTraceID(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	}
 
 	// Initialize service collection
 	services := make([]formatter.Process, 0)
@@ -119,6 +123,35 @@ func (c *Context) GetTraceCallerSkip() int {
 // Set adds a key-value pair to the context.
 func (c *Context) Set(key any, value any) {
 	c.fields.Store(key, value)
+}
+
+// adoptSpanContext copies the identifiers of an active span context into the
+// logger correlation fields. An invalid span context leaves them untouched.
+func (c *Context) adoptSpanContext(spanContext trace.SpanContext) {
+	if !spanContext.IsValid() {
+		return
+	}
+	c.SetTraceID(spanContext.TraceID().String())
+	c.SetSpanID(spanContext.SpanID().String())
+}
+
+// SetSpanID stores the correlation span id exposed by structured logs.
+func (c *Context) SetSpanID(id string) {
+	if id == "" {
+		return
+	}
+	c.Set(spanIDKey, id)
+}
+
+// SpanID returns the correlation span id of the active span, or an empty string
+// when no span is active.
+func (c *Context) SpanID() string {
+	if v, ok := c.Get(spanIDKey); ok {
+		if spanID, ok := v.(string); ok {
+			return spanID
+		}
+	}
+	return ""
 }
 
 // SetTraceID stores the correlation trace id used by structured logs and

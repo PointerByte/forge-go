@@ -3,6 +3,11 @@
 
 package common
 
+// InstrumentationName is the OpenTelemetry instrumentation scope reported by
+// every span this module starts. A scope names the instrumentation library; the
+// service identity travels in the resource, not in the scope.
+const InstrumentationName = "github.com/PointerByte/forge-go/logger"
+
 type KeyContex string
 
 const (

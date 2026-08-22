@@ -51,6 +51,7 @@ func (c *Context) customLogFormat() map[string]any {
 	// ---------- Format Logger ----------
 	entry := formatter.NewLogFormat()
 	entry.TraceID = traceID
+	entry.SpanID = c.SpanID()
 	entry.Details = details
 	entry.Process = services
 	entry.Method = funcName

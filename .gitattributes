@@ -1,0 +1,21 @@
+# Normalize line endings so `gofmt -l` stays clean regardless of the editor or
+# filesystem a contributor works from. 41 Go sources had been committed with
+# CRLF, which gofmt reports as unformatted.
+* text=auto eol=lf
+
+*.go     text eol=lf
+*.mod    text eol=lf
+*.sum    text eol=lf
+*.proto  text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.json   text eol=lf
+
+# Generated protobuf sources are checked in; regenerate, do not hand-edit.
+*.pb.go linguist-generated=true
+
+*.png binary
+*.jpg binary
+*.gz  binary
+*.pem binary

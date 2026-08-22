@@ -776,7 +776,10 @@ func TestExtractGRPCContextWithoutMetadata(t *testing.T) {
 func TestNewGRPCLoggerContextWithoutPeerOrMetadata(t *testing.T) {
 	resetGRPCTestState(t)
 
-	ctx, span := newGRPCLoggerContext(context.Background(), context.Background())
+	ctx, span, ownsSpan := newGRPCLoggerContext(context.Background())
+	if !ownsSpan {
+		t.Fatal("newGRPCLoggerContext() must own the span when no other instrumentation started one")
+	}
 	defer span.End()
 
 	ctxLogger := builder.New(ctx)

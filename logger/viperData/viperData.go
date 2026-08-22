@@ -22,6 +22,76 @@ const layout = "2006-01-02T15:04:05.000"
 // used when logger.bodyCaptureMaxBytes is absent or non-positive.
 const DefaultBodyCaptureMaxBytes = 64 * 1024
 
+// defaultIgnoredHeaders are never written to a log entry, whatever
+// logger.ignoredHeaders says. They are the headers that carry credentials, and
+// an observability pipeline must not be the place a bearer token or a session
+// cookie leaks. Applications extend this list through logger.ignoredHeaders;
+// they cannot shorten it.
+var defaultIgnoredHeaders = []string{
+	"Authorization",
+	"Proxy-Authorization",
+	"Cookie",
+	"Set-Cookie",
+	"X-Api-Key",
+	"X-Auth-Token",
+	"X-Csrf-Token",
+	"X-Xsrf-Token",
+}
+
+// defaultSensibleKeys are always redacted in structured payloads, whatever
+// logger.sensibleKeys says, for the same reason as defaultIgnoredHeaders.
+// Applications extend this list; they cannot shorten it.
+var defaultSensibleKeys = []string{
+	"authorization",
+	"password",
+	"passwd",
+	"secret",
+	"token",
+	"access_token",
+	"refresh_token",
+	"id_token",
+	"client_secret",
+	"api_key",
+	"apikey",
+	"private_key",
+	"credentials",
+	"session",
+	"cookie",
+}
+
+// DefaultIgnoredHeaders returns a copy of the headers Forge never logs.
+func DefaultIgnoredHeaders() []string {
+	return append([]string(nil), defaultIgnoredHeaders...)
+}
+
+// DefaultSensibleKeys returns a copy of the keys Forge always redacts.
+func DefaultSensibleKeys() []string {
+	return append([]string(nil), defaultSensibleKeys...)
+}
+
+// withDefaults merges configured values on top of a baseline that cannot be
+// switched off, comparing case-insensitively so "authorization" and
+// "Authorization" are one entry.
+func withDefaults(defaults []string, configured []string) []string {
+	merged := append([]string(nil), defaults...)
+	seen := make(map[string]struct{}, len(defaults)+len(configured))
+	for _, value := range defaults {
+		seen[strings.ToLower(strings.TrimSpace(value))] = struct{}{}
+	}
+	for _, value := range configured {
+		key := strings.ToLower(strings.TrimSpace(value))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, value)
+	}
+	return merged
+}
+
 func ResetViperDataSingleton() {
 	mux.Lock()
 	defer mux.Unlock()
@@ -52,10 +122,10 @@ func GetViperData(key string) any {
 			string(GinLoggerWithConfigSkipQueryStringAtribute): viper.GetBool(string(GinLoggerWithConfigSkipQueryStringAtribute)),
 			string(LoggerModeTestAtribute):                     viper.GetBool(string(LoggerModeTestAtribute)),
 			string(LoggerLevelAtribute):                        viper.GetString(string(LoggerLevelAtribute)),
-			string(LoggerIgnoredHeadersAtribute):               viper.GetStringSlice(string(LoggerIgnoredHeadersAtribute)),
+			string(LoggerIgnoredHeadersAtribute):               withDefaults(defaultIgnoredHeaders, viper.GetStringSlice(string(LoggerIgnoredHeadersAtribute))),
 			string(LoggerFormatterAtribute):                    viper.GetString(string(LoggerFormatterAtribute)),
 			string(LoggerFormatDateAtribute):                   viper.GetString(string(LoggerFormatDateAtribute)),
-			string(LoggerSensibleKeysAtribute):                 viper.GetStringSlice(string(LoggerSensibleKeysAtribute)),
+			string(LoggerSensibleKeysAtribute):                 withDefaults(defaultSensibleKeys, viper.GetStringSlice(string(LoggerSensibleKeysAtribute))),
 			string(LoggerBodyCaptureMaxBytesAtribute):          bodyCaptureMaxBytes,
 			string(LoggerRotateEnableAtribute):                 viper.GetBool(string(LoggerRotateEnableAtribute)),
 			string(LoggerRotateMaxSizeAtribute):                viper.GetInt(string(LoggerRotateMaxSizeAtribute)),

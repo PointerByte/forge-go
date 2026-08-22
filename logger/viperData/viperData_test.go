@@ -4,6 +4,7 @@
 package viperdata
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -35,10 +36,41 @@ func TestGetViperData(t *testing.T) {
 		t.Errorf("server.grpc.LoggerWithConfig.SkipFunction = %v, want [SayHello]", got)
 	}
 
+	// Configured keys extend the baseline Forge always redacts; they never
+	// replace it, so a deployment cannot switch credential redaction off.
 	got = GetViperData(string(LoggerSensibleKeysAtribute))
 	gotSlice, ok := got.([]string)
-	if !ok || len(gotSlice) != 1 || gotSlice[0] != "password" {
-		t.Errorf("logger.sensibleKeys = %v, want [password]", got)
+	if !ok {
+		t.Fatalf("logger.sensibleKeys = %v, want a []string", got)
+	}
+	if !slices.Contains(gotSlice, "password") {
+		t.Errorf("logger.sensibleKeys = %v, want it to contain the configured key", gotSlice)
+	}
+	for _, key := range DefaultSensibleKeys() {
+		if !slices.Contains(gotSlice, key) {
+			t.Errorf("logger.sensibleKeys = %v, want it to contain the default key %q", gotSlice, key)
+		}
+	}
+}
+
+// TestCredentialHeadersAreAlwaysIgnored is the security default: a deployment
+// that configures nothing must still never write a bearer token or a session
+// cookie to a log entry.
+func TestCredentialHeadersAreAlwaysIgnored(t *testing.T) {
+	ResetViperDataSingleton()
+	viper.Reset()
+	t.Cleanup(func() {
+		viper.Reset()
+		ResetViperDataSingleton()
+	})
+
+	for _, header := range []string{"Authorization", "authorization", "Cookie", "Set-Cookie", "Proxy-Authorization", "X-Api-Key"} {
+		if !IsIgnoredHeader(header) {
+			t.Errorf("IsIgnoredHeader(%q) = false, want true with no configuration at all", header)
+		}
+	}
+	if IsIgnoredHeader("Content-Type") {
+		t.Error("IsIgnoredHeader(\"Content-Type\") = true, want false")
 	}
 }
 

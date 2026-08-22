@@ -131,19 +131,55 @@ func TestFromViper(t *testing.T) {
 		viperdata.ResetViperDataSingleton()
 	})
 
-	viper.Set(string(viperdata.LoggerSensibleKeysAtribute), []string{"password"})
+	viper.Set(string(viperdata.LoggerSensibleKeysAtribute), []string{"customKey"})
 
 	s := FromViper()
 	got := s.Value(map[string]any{
-		"password": "secret",
-		"token":    "visible",
+		"password":  "secret",
+		"customKey": "secret",
+		"colour":    "visible",
 	}).(map[string]any)
 
 	if got["password"] != RedactedValue {
-		t.Fatalf("password = %#v, want redacted", got["password"])
+		t.Fatalf("password = %#v, want redacted by the always-on baseline", got["password"])
 	}
-	if got["token"] != "visible" {
-		t.Fatalf("token = %#v, want visible", got["token"])
+	if got["customKey"] != RedactedValue {
+		t.Fatalf("customKey = %#v, want redacted by configuration", got["customKey"])
+	}
+	if got["colour"] != "visible" {
+		t.Fatalf("colour = %#v, want visible", got["colour"])
+	}
+}
+
+// TestCredentialKeysAreRedactedWithoutConfiguration is the security default: a
+// deployment that configures nothing must still not log a token or a secret.
+func TestCredentialKeysAreRedactedWithoutConfiguration(t *testing.T) {
+	viper.Reset()
+	viperdata.ResetViperDataSingleton()
+	t.Cleanup(func() {
+		viper.Reset()
+		viperdata.ResetViperDataSingleton()
+	})
+
+	s := FromViper()
+	if !s.Enabled() {
+		t.Fatal("FromViper() produced a disabled sanitizer with no configuration")
+	}
+
+	got := s.Value(map[string]any{
+		"authorization": "Bearer abc",
+		"refresh_token": "rt",
+		"client_secret": "cs",
+		"colour":        "visible",
+	}).(map[string]any)
+
+	for _, key := range []string{"authorization", "refresh_token", "client_secret"} {
+		if got[key] != RedactedValue {
+			t.Errorf("%s = %#v, want redacted", key, got[key])
+		}
+	}
+	if got["colour"] != "visible" {
+		t.Errorf("colour = %#v, want visible", got["colour"])
 	}
 }
 
