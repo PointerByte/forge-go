@@ -1,0 +1,16 @@
+jwt:
+  enable: true
+  transport: header
+  algorithm: HS256
+  hmac:
+    secret: "replace-with-your-hmac-secret"
+  keys:
+    private_key: "./certs/jwt/ed25519-key.pem"
+    public_key: "./certs/jwt/ed25519-public.pem"
+encrypt:
+  aws-kms:
+    arn: ""
+  azure-key-vault:
+    key-id: ""
+  gcp-kms:
+    key-id: ""

@@ -1,0 +1,4 @@
+/artifacts/
+/generated/
+/wit/deps/
+/wit/*.wasm

@@ -1,0 +1,107 @@
+app:
+  name: GoForge-service
+  version: 0.0.1
+
+env:
+  files:
+    - .env
+    - .env.local
+
+server:
+  gin:
+    groups:
+      - /api/v1
+    port: ":8080"
+    mode: release
+    readHeaderTimeout: 5s
+    UseH2C: true
+    rate:
+      limit: 1000
+      burst: 2000
+    LoggerWithConfig:
+      enabled: true
+      SkipPaths:
+        - /health
+      SkipQueryString: false
+    autotls:
+      enable: false
+      domain: api.example.com
+      dirCache: ./certs
+      version: tlsv12
+    tls:
+      enable: false
+      certFile: ./certs/server/cert.pem
+      keyFile: ./certs/server/key.pem
+      version: tlsv12
+    mtls:
+      enable: false
+      clientCAFile: ./certs/server/ca.pem
+      clientAuth: require_and_verify_client_cert
+
+  grpc:
+    port: ":50051"
+    rate:
+      limit: 1000
+      burst: 2000
+    LoggerWithConfig:
+      enabled: true
+      SkipFunction: []
+    tls:
+      enable: false
+      certFile: ./certs/server/cert.pem
+      keyFile: ./certs/server/key.pem
+      version: tlsv12
+    mtls:
+      enable: false
+      clientCAFile: ./certs/ca.pem
+      clientAuth: require_and_verify_client_cert
+
+client:
+  http:
+    timeout: 5s
+    tls:
+      enable: false
+      caFile: ./certs/client/ca.pem
+      version: tlsv12
+      insecureSkipVerify: false
+    mtls:
+      enable: false
+      certFile: ./certs/client/cert.pem
+      keyFile: ./certs/client/key.pem
+  grpc:
+    tls:
+      enable: false
+      caFile: ./certs/client/ca.pem
+      version: tlsv12
+      insecureSkipVerify: false
+    mtls:
+      enable: false
+      certFile: ./certs/client/cert.pem
+      keyFile: ./certs/client/key.pem
+
+logger:
+  dir: logs
+  level: info
+  ignoredHeaders:
+    - Authorization
+    - Cookie
+  formatter: json
+  formatDate: "2006-01-02T15:04:05.000"
+  rotate:
+    enable: true
+    maxSize: 10
+    maxBackups: 5
+    maxAge: 30
+    compress: true
+
+traces:
+  SkipPaths:
+    - /health
+
+jwt:
+  enable: false
+  transport: header
+  algorithm: EDDSA
+  keys:
+    private_key: ./certs/jwt/ed25519-key.pem
+    public_key: ./certs/jwt/ed25519-public.pem

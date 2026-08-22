@@ -1,0 +1,46 @@
+{
+  "schema": "goforge.test-vectors.v1",
+  "abi": "goforge.abi.v1",
+  "vectors": [
+    {
+      "name": "normalize-trim-collapse-ascii-lowercase",
+      "request": {"abi":"goforge.abi.v1","id":"normalize-1","operation":"text.normalize","payload":{"value":"  HéLLo \t WORLD\n","trim":true,"collapse_whitespace":true,"lowercase_ascii":true}},
+      "response": {"abi":"goforge.abi.v1","id":"normalize-1","ok":true,"result":{"value":"héllo world"}}
+    },
+    {
+      "name": "validate-stable-violations",
+      "request": {"abi":"goforge.abi.v1","id":"validate-1","operation":"text.validate","payload":{"value":"abc 1","rules":{"required":true,"ascii":true,"forbid_control":true,"forbid_whitespace":true,"min_bytes":4,"max_bytes":8,"min_runes":4,"max_runes":8,"prefix":"abc","suffix":"1"}}},
+      "response": {"abi":"goforge.abi.v1","id":"validate-1","ok":true,"result":{"valid":false,"violations":[{"code":"whitespace"}]}}
+    },
+    {
+      "name": "sha256-abc",
+      "request": {"abi":"goforge.abi.v1","id":"sha-1","operation":"crypto.sha256","payload":{"data":"YWJj"}},
+      "response": {"abi":"goforge.abi.v1","id":"sha-1","ok":true,"result":{"digest":"ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="}}
+    },
+    {
+      "name": "hmac-sha256-rfc4231-case-1",
+      "request": {"abi":"goforge.abi.v1","id":"hmac-1","operation":"crypto.hmac-sha256","payload":{"key":"CwsLCwsLCwsLCwsLCwsLCwsLCws=","data":"SGkgVGhlcmU="}},
+      "response": {"abi":"goforge.abi.v1","id":"hmac-1","ok":true,"result":{"mac":"sDRMYdjbOFNcqK/OrwvxK4gdwgDJgz2nJuk3bC4yz/c="}}
+    },
+    {
+      "name": "aes-128-gcm-nist-encrypt",
+      "request": {"abi":"goforge.abi.v1","id":"aes-encrypt-1","operation":"crypto.aes-gcm.encrypt","payload":{"key":"AAAAAAAAAAAAAAAAAAAAAA==","nonce":"AAAAAAAAAAAAAAAA","aad":"","plaintext":"AAAAAAAAAAAAAAAAAAAAAA=="}},
+      "response": {"abi":"goforge.abi.v1","id":"aes-encrypt-1","ok":true,"result":{"ciphertext":"A4jazmC2o5LzKMK5cbL+eKtuR9Qs7BO99TpnshJXvd8="}}
+    },
+    {
+      "name": "aes-128-gcm-nist-decrypt",
+      "request": {"abi":"goforge.abi.v1","id":"aes-decrypt-1","operation":"crypto.aes-gcm.decrypt","payload":{"key":"AAAAAAAAAAAAAAAAAAAAAA==","nonce":"AAAAAAAAAAAAAAAA","aad":"","ciphertext":"A4jazmC2o5LzKMK5cbL+eKtuR9Qs7BO99TpnshJXvd8="}},
+      "response": {"abi":"goforge.abi.v1","id":"aes-decrypt-1","ok":true,"result":{"plaintext":"AAAAAAAAAAAAAAAAAAAAAA=="}}
+    },
+    {
+      "name": "base64-encode-utf8",
+      "request": {"abi":"goforge.abi.v1","id":"base64-encode-1","operation":"encoding.base64.encode","payload":{"text":"hello"}},
+      "response": {"abi":"goforge.abi.v1","id":"base64-encode-1","ok":true,"result":{"encoded":"aGVsbG8="}}
+    },
+    {
+      "name": "base64-decode-utf8",
+      "request": {"abi":"goforge.abi.v1","id":"base64-decode-1","operation":"encoding.base64.decode","payload":{"encoded":"aGVsbG8="}},
+      "response": {"abi":"goforge.abi.v1","id":"base64-decode-1","ok":true,"result":{"text":"hello"}}
+    }
+  ]
+}

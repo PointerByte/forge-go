@@ -1,0 +1,36 @@
+package pointerbyte:goforge-poc@0.1.0;
+
+/// A deliberately small host capability. The guest cannot access the host
+/// environment except through explicitly supplied imports such as this one.
+interface host {
+  annotate: func(value: string) -> string;
+}
+
+interface operations {
+  record pair {
+    left: u32,
+    right: u32,
+  }
+
+  record summary {
+    total: u32,
+    label: string,
+  }
+
+  variant operation-error {
+    invalid-input(string),
+    overflow,
+  }
+
+  add: func(left: u32, right: u32) -> u32;
+  greet: func(name: string) -> string;
+  reverse-bytes: func(value: list<u8>) -> list<u8>;
+  summarize: func(value: pair) -> result<summary, operation-error>;
+  annotate: func(value: string) -> string;
+}
+
+world goforge-poc {
+  include wasi:cli/imports@0.2.0;
+  import host;
+  export operations;
+}
