@@ -41,6 +41,7 @@ codigo todavia compile.
 - `github.com/PointerByte/forge-go/encrypt/aws-kms`: operaciones con AWS KMS y fallbacks locales
 - `github.com/PointerByte/forge-go/encrypt/azure-key-vault`: operaciones con Azure Key Vault y fallbacks locales
 - `github.com/PointerByte/forge-go/encrypt/gcp-kms`: operaciones con Google Cloud KMS y fallbacks locales
+- `github.com/PointerByte/forge-go/encrypt/pkcs11`: operaciones con PKCS#11 (HSM fisico o de red) y fallbacks locales; requiere el build tag `pkcs11`
 
 ## Capacidades
 
@@ -91,7 +92,7 @@ Los metodos de generacion de llaves devuelven `*models.KeyData`:
 - `PublicKey`: llave publica local cuando es exportable
 - `KeyRef`: referencia canonica para operaciones: material local o una
   referencia de proveedor como ARN, URL o version
-- `Provider`: nombre del backend, por ejemplo `local`, `aws-kms`, `azure-key-vault` o `gcp-kms`
+- `Provider`: nombre del backend, por ejemplo `local`, `aws-kms`, `azure-key-vault`, `gcp-kms` o `pkcs11`
 
 Usa `KeyRef` al pasar llaves generadas a operaciones con cualquier backend.
 Para llaves asimetricas locales, usa `KeyRef` como llave privada y `PublicKey`
@@ -273,6 +274,82 @@ Claves de configuracion usadas como fallback:
 
 Azure y GCP tambien conservan compatibilidad con las claves antiguas
 `encrypt.azure-key-vault.key-id` y `encrypt.gcp-kms.key-id`.
+
+## Backends Hardware
+
+El paquete `pkcs11` habla con un HSM fisico o de red a traves de la libreria
+PKCS#11 del fabricante. A diferencia de los backends cloud necesita cgo y solo
+se compila con el build tag `pkcs11`:
+
+```bash
+go build -tags pkcs11 ./...
+```
+
+Sin el tag se compila un stub y todos los constructores devuelven
+`ErrUnavailable`, de modo que las compilaciones con `CGO_ENABLED=0` y la
+compilacion cruzada siguen funcionando para quien no necesita soporte de HSM.
+
+Las llaves se referencian con URIs RFC 7512, lo que hace que la decision de
+enrutado sea exacta en vez de heuristica:
+
+```go
+import "github.com/PointerByte/forge-go/encrypt/pkcs11"
+
+repository := pkcs11.NewRepository(
+	pkcs11.WithModulePath("/usr/lib64/softhsm/libsofthsm2.so"),
+	pkcs11.WithTokenLabel("forge-hsm"),
+	pkcs11.WithPinProvider(func(ctx context.Context) (string, error) {
+		return leerPinDeTuAlmacenDeSecretos(ctx)
+	}),
+)
+defer repository.Close()
+
+signature, err := repository.SignRSAPSS(ctx,
+	"pkcs11:token=forge-hsm;object=jwt-signing;type=private", payload)
+```
+
+Claves de configuracion:
+
+- `encrypt.vault.pkcs11.module-path`
+- `encrypt.vault.pkcs11.token-label`
+- `encrypt.vault.pkcs11.slot-id`
+- `encrypt.vault.pkcs11.key-uri`
+- `encrypt.vault.pkcs11.max-sessions`
+
+Deliberadamente **no** existe una clave de configuracion para el PIN. Se
+suministra mediante `WithPinProvider`, asi que nunca acaba en `application.yml`,
+ni en un volcado del entorno del proceso, ni en un log.
+
+Comportamiento que conviene conocer antes de desplegar:
+
+- Las llaves privadas y secretas generadas se crean con `CKA_SENSITIVE=true` y
+  `CKA_EXTRACTABLE=false`; no se pueden extraer del token.
+- Cuando el token no anuncia un mecanismo que una operacion necesita, esa
+  operacion falla. Nunca cae en silencio a software, lo que anularia la garantia
+  de que el trabajo ocurrio en hardware. El fallback a `local` solo sucede
+  cuando quien llama pasa material de llave local en vez de una URI.
+- `RotateKey` sintetiza la rotacion, porque PKCS#11 no la tiene: genera una
+  llave equivalente con un `CKA_ID` nuevo y devuelve un `KeyRef` nuevo. La llave
+  anterior sigue usable salvo que se active `WithRotateDisablesPrevious`.
+- `DeactivateKey` limpia los atributos de uso del objeto. En la mayoria de
+  tokens esto es irreversible, a diferencia del desactivado reversible que
+  ofrecen los backends cloud.
+- `ECDH_Decode` mantiene el secreto compartido dentro del token cuando este
+  implementa `CKM_HKDF_DERIVE`. Si no, el secreto efimero se extrae y la
+  derivacion termina localmente, igual que ya hacen los backends de AWS y Azure;
+  usa `WithAllowSecretExtraction(false)` para que falle en su lugar.
+- `HMAC` necesita una llave `CKK_GENERIC_SECRET` con `CKA_SIGN`.
+  `GenerateSymetrycKeys` crea una llave `CKK_AES` para `EncryptAES`, y la mayoria
+  de tokens se niegan a calcular un MAC con ella, asi que las llaves de HMAC se
+  aprovisionan aparte, igual que el backend de AWS necesita una llave HMAC de KMS
+  y no una de cifrado.
+- `RSA_OAEP_Decode` esta fijado a SHA-256 con MGF1-SHA256 para que el ciphertext
+  siga siendo legible por los demas backends. Un token que solo ofrezca OAEP con
+  SHA-1 (SoftHSM2 lo hace) devuelve `ErrOAEPHashUnsupported` en vez de debilitar
+  los parametros en silencio.
+
+Verificado contra SoftHSM2 2.7 con `go test -tags 'pkcs11 pkcs11_integration'`;
+mira `integration_test.go` para la configuracion.
 
 ## Relacion Con `security`
 
