@@ -492,7 +492,9 @@ func registerJobs() error {
 ```
 
 `tools/workers` provides a small bounded worker loop through `SetWorkersLimit`,
-`RunWorkers`, `AddTask`, `StopWorkers`, and `RestartWorkers`.
+`SetParallelism`, `RunWorkers`, `AddTask`, `StopWorkers`, and `RestartWorkers`.
+The limit bounds both concurrent execution and queue capacity, and a change to
+it reaches a dispatcher that is already running.
 
 ## Runtime Examples
 

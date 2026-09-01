@@ -6,80 +6,113 @@ import (
 	"sync/atomic"
 )
 
-var defaultWorkerLimit = 1000
-
 type workerRun struct {
 	done     chan struct{}
-	limit    int
-	pool     <-chan func()
 	stop     chan struct{}
 	stopping bool
 }
 
 var (
-	workerPool   chan func()
-	workersLimit int
+	// stateMu guards every field below and stateChanged signals each change to
+	// them. One lock for the whole dispatcher is what lets AddTask wait for
+	// room without holding anyone else out: Cond.Wait releases the mutex while
+	// a producer is parked, so SetWorkersLimit, StopWorkers and RunWorkers stay
+	// serviceable even when the queue is full and nothing is draining it.
+	stateMu      sync.Mutex
+	stateChanged = sync.NewCond(&stateMu)
 
-	stateMu     sync.Mutex
+	// queue is the pending task list. It is never replaced, only appended to
+	// and consumed from, so a limit change can never strand a producer on a
+	// queue nobody reads, nor drop what is already waiting.
+	queue        []func()
+	workersLimit int
+	activeTasks  int
+
 	activeRun   *workerRun
 	stopSignal  chan struct{}
 	flagRunning atomic.Bool
 
-	executionMu      sync.Mutex
-	executionChanged = sync.NewCond(&executionMu)
-	activeTasks      int
+	parallelism atomic.Bool
 )
 
 func init() {
-	defaultWorkerLimit = defaultWorkerLimit * runtime.NumCPU()
-	workerPool = make(chan func(), defaultWorkerLimit)
-	workersLimit = defaultWorkerLimit
+	parallelism.Store(true)
+	workersLimit = runtime.NumCPU()
 }
 
+// SetWorkersLimit sets the maximum number of concurrently executing tasks, and
+// with it the queue capacity.
+//
+// The limit is applied verbatim: there is no fallback to a default, so a
+// non-positive limit leaves the dispatcher without an execution slot and the
+// queue without room, and tasks wait until a positive limit is configured.
+//
+// The change reaches a dispatcher that is already running. Raising the limit
+// starts queued tasks and releases waiting producers right away; lowering it
+// takes effect as the tasks in flight finish, since none of them is cancelled.
+// Tasks already queued are never dropped by a limit change.
+func SetWorkersLimit(limit int) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
+	workersLimit = limit
+	stateChanged.Broadcast()
+}
+
+// SetParallelism sets whether tasks should be executed in parallel or sequentially.
+func SetParallelism(parallel bool) {
+	parallelism.Store(parallel)
+}
+
+// AddTask queues a task for asynchronous execution. It blocks while the queue
+// holds as many tasks as the configured limit allows, and returns as soon as
+// the dispatcher makes room or the limit is raised.
 func AddTask(task func()) {
 	stateMu.Lock()
-	pool := workerPool
-	stateMu.Unlock()
+	defer stateMu.Unlock()
 
-	pool <- task
-}
-
-// SetWorkersLimit sets the maximum number of concurrent workers for future runs.
-// It also sets the task queue capacity. Non-positive limits fall back to the
-// default worker limit.
-func SetWorkersLimit(limit int) {
-	if limit <= 0 {
-		limit = defaultWorkerLimit
+	for len(queue) >= workersLimit {
+		stateChanged.Wait()
 	}
 
-	stateMu.Lock()
-	workerPool = make(chan func(), limit)
-	workersLimit = limit
-	stateMu.Unlock()
+	queue = append(queue, task)
+	stateChanged.Broadcast()
 }
 
 // StopWorkers stops the currently running worker loop, if any.
+//
+// The wait for the run to finish happens outside the lock on purpose: the
+// dispatcher needs stateMu to observe the stop and close its done channel, so
+// holding the lock here would deadlock the two against each other.
 func StopWorkers() {
+	run := signalStop()
+	if run == nil {
+		return
+	}
+
+	<-run.done
+}
+
+// signalStop marks the active run as stopping and wakes everyone waiting on the
+// dispatcher state. It returns the run to wait for, or nil when none is active.
+func signalStop() *workerRun {
 	stateMu.Lock()
+	defer stateMu.Unlock()
+
 	run := activeRun
 	if run == nil {
 		flagRunning.Store(false)
 		stopSignal = nil
-		stateMu.Unlock()
-		return
+		return nil
 	}
 
 	if !run.stopping {
 		run.stopping = true
 		close(run.stop)
 	}
-	stateMu.Unlock()
+	stateChanged.Broadcast()
 
-	executionMu.Lock()
-	executionChanged.Broadcast()
-	executionMu.Unlock()
-
-	<-run.done
+	return run
 }
 
 // RestartWorkers stops the current worker loop and starts it again.
@@ -91,21 +124,19 @@ func RestartWorkers() {
 // RunWorkers starts the managed worker loop if one is not already running.
 func RunWorkers() {
 	stateMu.Lock()
+	defer stateMu.Unlock()
+
 	if activeRun != nil {
-		stateMu.Unlock()
 		return
 	}
 
 	run := &workerRun{
-		done:  make(chan struct{}),
-		limit: workersLimit,
-		pool:  workerPool,
-		stop:  make(chan struct{}),
+		done: make(chan struct{}),
+		stop: make(chan struct{}),
 	}
 	activeRun = run
 	stopSignal = run.stop
 	flagRunning.Store(true)
-	stateMu.Unlock()
 
 	go dispatch(run)
 }
@@ -113,40 +144,51 @@ func RunWorkers() {
 func dispatch(run *workerRun) {
 	defer finishRun(run)
 
-	for reserveExecutionSlot(run) {
-		select {
-		case <-run.stop:
-			releaseExecutionSlot()
+	for {
+		task, ok := nextTask(run)
+		if !ok {
 			return
-		case task := <-run.pool:
+		}
+
+		if parallelism.Load() {
 			go executeTask(task)
+		} else {
+			executeTask(task)
 		}
 	}
 }
 
-func reserveExecutionSlot(run *workerRun) bool {
-	executionMu.Lock()
-	defer executionMu.Unlock()
+// nextTask waits for a queued task and a free execution slot, reserves the slot
+// and hands the task over. It reports false once the run has been stopped.
+//
+// The limit is read on every pass rather than captured when the run starts,
+// which is what makes SetWorkersLimit reach a dispatcher already in flight.
+func nextTask(run *workerRun) (func(), bool) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
 
-	for activeTasks >= run.limit {
-		if stopped(run.stop) {
-			return false
-		}
-		executionChanged.Wait()
+	for !run.stopping && (len(queue) == 0 || activeTasks >= workersLimit) {
+		stateChanged.Wait()
 	}
 
-	if stopped(run.stop) {
-		return false
+	if run.stopping {
+		return nil, false
 	}
+
+	task := queue[0]
+	queue[0] = nil
+	queue = queue[1:]
 	activeTasks++
-	return true
+	stateChanged.Broadcast()
+
+	return task, true
 }
 
 func releaseExecutionSlot() {
-	executionMu.Lock()
+	stateMu.Lock()
+	defer stateMu.Unlock()
 	activeTasks--
-	executionChanged.Broadcast()
-	executionMu.Unlock()
+	stateChanged.Broadcast()
 }
 
 func executeTask(task func()) {
@@ -163,13 +205,4 @@ func finishRun(run *workerRun) {
 	}
 	stateMu.Unlock()
 	close(run.done)
-}
-
-func stopped(stop <-chan struct{}) bool {
-	select {
-	case <-stop:
-		return true
-	default:
-		return false
-	}
 }

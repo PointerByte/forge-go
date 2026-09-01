@@ -11,8 +11,8 @@ require (
 require go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
 
 require (
-	github.com/PointerByte/forge-go/encrypt v1.0.4
-	github.com/PointerByte/forge-go/logger v1.0.4 // indirect
+	github.com/PointerByte/forge-go/encrypt v1.0.5
+	github.com/PointerByte/forge-go/logger v1.0.5 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.2 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect

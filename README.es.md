@@ -498,7 +498,9 @@ func registerJobs() error {
 ```
 
 `tools/workers` ofrece un loop simple de workers acotados mediante
-`SetWorkersLimit`, `RunWorkers`, `AddTask`, `StopWorkers` y `RestartWorkers`.
+`SetWorkersLimit`, `SetParallelism`, `RunWorkers`, `AddTask`, `StopWorkers` y
+`RestartWorkers`. El límite acota tanto la ejecución concurrente como la
+capacidad de la cola, y su cambio alcanza a un dispatcher que ya está corriendo.
 
 ## Ejemplos Ejecutables
 
