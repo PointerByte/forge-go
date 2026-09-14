@@ -3,8 +3,8 @@ module github.com/PointerByte/forge-go
 go 1.26.0
 
 require (
-	github.com/PointerByte/forge-go/logger v1.0.6
-	github.com/PointerByte/forge-go/security v1.0.6
+	github.com/PointerByte/forge-go/logger v1.0.7
+	github.com/PointerByte/forge-go/security v1.0.7
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang/mock v1.6.0
@@ -35,7 +35,7 @@ require (
 )
 
 require (
-	github.com/PointerByte/forge-go/encrypt v1.0.6 // indirect
+	github.com/PointerByte/forge-go/encrypt v1.0.7 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.3 // indirect

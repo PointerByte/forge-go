@@ -16,27 +16,23 @@ import (
 type LogFormat struct {
 	Level      Level          `json:"level"`
 	Timestamp  string         `json:"timestamp"`
-	TraceID    string         `json:"traceID"`
+	TraceID    string         `json:"traceID,omitempty"`
 	SpanID     string         `json:"spanID,omitempty"`
 	Message    string         `json:"message"`
 	Details    Details        `json:"details"`
-	Process    []Process      `json:"process"`
+	Process    []Process      `json:"process,omitempty"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 	Method     string         `json:"method"`
 	Line       int            `json:"line"`
 	Latency    int64          `json:"latency"`
 }
 
-// NewLogFormat creates a log payload with the public process collection
-// initialized. A log entry always exposes process as an array, even when no
-// downstream operation was traced.
+// NewLogFormat creates a log payload with the process collection initialized.
 func NewLogFormat() LogFormat {
 	return LogFormat{Process: make([]Process, 0)}
 }
 
-// Normalize returns a log payload safe for serialization. In particular,
-// process is part of the public JSON contract and must never be encoded as
-// null.
+// Normalize returns a log payload safe for serialization.
 func (l LogFormat) Normalize() LogFormat {
 	if l.Process == nil {
 		l.Process = make([]Process, 0)
@@ -44,8 +40,7 @@ func (l LogFormat) Normalize() LogFormat {
 	return l
 }
 
-// MarshalJSON preserves the process JSON contract for every consumer that
-// serializes LogFormat directly, including custom formatter templates.
+// MarshalJSON normalizes the payload before direct serialization.
 func (l LogFormat) MarshalJSON() ([]byte, error) {
 	type logFormatAlias LogFormat
 	return json.Marshal(logFormatAlias(l.Normalize()))

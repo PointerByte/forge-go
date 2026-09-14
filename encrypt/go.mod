@@ -7,7 +7,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
-	github.com/PointerByte/forge-go/logger v1.0.6
+	github.com/PointerByte/forge-go/logger v1.0.7
 	github.com/aws/aws-sdk-go-v2 v1.44.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.40
 	github.com/aws/aws-sdk-go-v2/service/kms v1.53.6

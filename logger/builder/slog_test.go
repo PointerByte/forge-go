@@ -208,20 +208,12 @@ func TestJSONHandler_Handle_JSON(t *testing.T) {
 		t.Fatalf("details.path = %#v, want %#v", details["path"], "/loan/simulate")
 	}
 
-	servicesAny, ok := decoded["process"]
-	if !ok {
-		t.Fatal("process field not found")
-	}
-	services, ok := servicesAny.([]any)
-	if !ok {
-		t.Fatalf("services has unexpected type %T", servicesAny)
-	}
-	if len(services) != 0 {
-		t.Fatalf("services len = %d, want 0", len(services))
+	if _, exists := decoded["process"]; exists {
+		t.Fatalf("process must be omitted when empty: %#v", decoded)
 	}
 }
 
-func TestJSONHandler_HandleNormalizesMissingOrInvalidProcessCollection(t *testing.T) {
+func TestJSONHandler_HandleOmitsMissingOrInvalidProcessCollection(t *testing.T) {
 	resetBuilderViper()
 	t.Cleanup(resetBuilderViper)
 
@@ -242,15 +234,8 @@ func TestJSONHandler_HandleNormalizesMissingOrInvalidProcessCollection(t *testin
 	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &decoded); err != nil {
 		t.Fatalf("invalid JSON output: %v", err)
 	}
-	process, ok := decoded["process"].([]any)
-	if !ok {
-		t.Fatalf("process = %T, want []any", decoded["process"])
-	}
-	if len(process) != 0 {
-		t.Fatalf("process = %#v, want []", process)
-	}
-	if _, exists := decoded["pro"+"ccess"]; exists {
-		t.Fatalf("unexpected legacy process field in %#v", decoded)
+	if _, exists := decoded["process"]; exists {
+		t.Fatalf("process must be omitted when empty: %#v", decoded)
 	}
 }
 
