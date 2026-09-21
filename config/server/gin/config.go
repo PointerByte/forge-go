@@ -21,7 +21,6 @@ import (
 	"github.com/PointerByte/forge-go/logger/builder"
 	httpMiddlewaresLogger "github.com/PointerByte/forge-go/logger/middlewares/http"
 	"github.com/PointerByte/forge-go/security/middlewares"
-	"github.com/PointerByte/forge-go/tools/jobs"
 	"github.com/PointerByte/forge-go/tools/utilities"
 	"github.com/PointerByte/forge-go/tools/utilities/traces"
 	"github.com/gin-contrib/cors"
@@ -64,7 +63,6 @@ var builderNewFn = builder.New
 var logServerErrorFn = func(err error) {
 	builder.New(context.Background()).Error(err)
 }
-var startJobsFn = jobs.StartJobs
 var stopFn = Stop
 var waitForShutdownSignalFn = waitForShutdownSignal
 var runAsyncFn = func(fn func()) {
@@ -338,9 +336,8 @@ const timeout = 30 * time.Second
 
 // Start runs the provided HTTP server and coordinates the shutdown workflow.
 //
-// It starts the listener, triggers global jobs startup, logs the configured
-// port, and then executes the registered shutdown handlers before stopping the
-// server.
+// It starts the listener, logs the configured port, and then executes the
+// registered shutdown handlers before stopping the server.
 func Start(srv *http.Server) {
 	if srv == nil {
 		logServerErrorFn(errors.New("http server is required"))
@@ -365,8 +362,6 @@ func Start(srv *http.Server) {
 		}
 	})
 
-	// Start global jobs.
-	startJobsFn()
 	port := viper.GetString("server.gin.port")
 	ctxLogger.Info(fmt.Sprintf("Server started on port %s", port))
 	shutdownFn(srv)

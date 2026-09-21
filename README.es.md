@@ -473,9 +473,10 @@ quieras construir transportes desde `viper`.
 ## Trabajo En Background
 
 `tools/jobs` ofrece jobs en proceso con intervalo fijo. Los jobs arrancan
-cuando se ejecuta `jobs.StartJobs()`; `config/server/gin.Start(...)` lo llama
-automaticamente. Cuando `server.modeTest=true`, los jobs no arrancan. Usa un
-id cuando un job deba pausarse, reanudarse o detenerse individualmente.
+cuando se ejecuta `jobs.StartJobs()`; los bootstraps de servidor Gin y gRPC no
+lo llaman, asi que tu aplicacion debe invocarlo explicitamente. Cuando
+`server.modeTest=true`, los jobs no arrancan. Usa un id cuando un job deba
+pausarse, reanudarse o detenerse individualmente.
 
 ```go
 func registerJobs() error {

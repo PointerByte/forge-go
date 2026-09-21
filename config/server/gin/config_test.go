@@ -45,7 +45,6 @@ func resetServerTestState(t *testing.T) {
 	origNewCertPoolFn := newCertPoolFn
 	origBuilderNewFn := builderNewFn
 	origLogServerErrorFn := logServerErrorFn
-	origStartJobsFn := startJobsFn
 	origStopFn := stopFn
 	origWaitForShutdownSignalFn := waitForShutdownSignalFn
 	origRunAsyncFn := runAsyncFn
@@ -75,7 +74,6 @@ func resetServerTestState(t *testing.T) {
 	newCertPoolFn = x509.NewCertPool
 	builderNewFn = builder.New
 	logServerErrorFn = func(error) {}
-	startJobsFn = func() {}
 	stopFn = Stop
 	waitForShutdownSignalFn = waitForShutdownSignal
 	runAsyncFn = func(fn func()) { go fn() }
@@ -97,7 +95,6 @@ func resetServerTestState(t *testing.T) {
 		newCertPoolFn = origNewCertPoolFn
 		builderNewFn = origBuilderNewFn
 		logServerErrorFn = origLogServerErrorFn
-		startJobsFn = origStartJobsFn
 		stopFn = origStopFn
 		waitForShutdownSignalFn = origWaitForShutdownSignalFn
 		runAsyncFn = origRunAsyncFn
@@ -615,7 +612,6 @@ func TestStartAndShutdown(t *testing.T) {
 	t.Run("start without tls", func(t *testing.T) {
 		resetServerTestState(t)
 		var listenCalls int32
-		var jobsCalls int32
 		var stopCalls int32
 		var shutdownCalls int32
 
@@ -623,9 +619,6 @@ func TestStartAndShutdown(t *testing.T) {
 		listenAndServeFn = func(*http.Server) error {
 			atomic.AddInt32(&listenCalls, 1)
 			return http.ErrServerClosed
-		}
-		startJobsFn = func() {
-			atomic.AddInt32(&jobsCalls, 1)
 		}
 		waitForShutdownSignalFn = func() {
 			atomic.AddInt32(&stopCalls, 1)
@@ -638,9 +631,6 @@ func TestStartAndShutdown(t *testing.T) {
 		viper.Set("server.gin.port", ":7070")
 		Start(&http.Server{})
 
-		if atomic.LoadInt32(&jobsCalls) != 1 {
-			t.Fatalf("expected 1 jobs start, got %d", jobsCalls)
-		}
 		if atomic.LoadInt32(&stopCalls) != 1 {
 			t.Fatalf("expected 1 stop call, got %d", stopCalls)
 		}
@@ -668,7 +658,6 @@ func TestStartAndShutdown(t *testing.T) {
 			atomic.AddInt32(&listenTLSCalls, 1)
 			return http.ErrServerClosed
 		}
-		startJobsFn = func() {}
 		waitForShutdownSignalFn = func() {}
 		shutdownServerFn = func(*http.Server, context.Context) error { return nil }
 
@@ -729,7 +718,6 @@ func TestStartLogsUnexpectedListenErrorAndTriggersShutdown(t *testing.T) {
 	resetServerTestState(t)
 
 	waitForShutdownSignalFn = func() {}
-	startJobsFn = func() {}
 	shutdownServerFn = func(*http.Server, context.Context) error { return nil }
 	runAsyncFn = func(fn func()) { fn() }
 	var logged error

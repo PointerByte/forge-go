@@ -467,9 +467,10 @@ client transports to be built from `viper`.
 ## Background Work
 
 `tools/jobs` provides fixed-interval in-process jobs. Jobs begin when
-`jobs.StartJobs()` runs; `config/server/gin.Start(...)` calls it automatically.
-When `server.modeTest=true`, jobs are not started. Use an id when a job must be
-paused, resumed, or stopped individually.
+`jobs.StartJobs()` runs; the Gin and gRPC server bootstraps do not call it, so
+your application must call it explicitly. When `server.modeTest=true`, jobs are
+not started. Use an id when a job must be paused, resumed, or stopped
+individually.
 
 ```go
 func registerJobs() error {
