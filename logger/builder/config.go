@@ -17,10 +17,10 @@ import (
 	"github.com/PointerByte/forge-go/logger/common"
 	viperdata "github.com/PointerByte/forge-go/logger/viperData"
 	"github.com/spf13/viper"
-	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	otellog "go.opentelemetry.io/otel/log"
 	logglobal "go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -46,8 +46,8 @@ const (
 	protocolHTTPProto = "http/protobuf"
 	protocolGRPC      = "grpc"
 
-	// instrumentationName is the instrumentation scope of the records the
-	// slog bridge emits.
+	// instrumentationName is the instrumentation scope of the exported log
+	// records.
 	instrumentationName = common.InstrumentationName
 )
 
@@ -186,7 +186,7 @@ func isEnvTrue(key string) bool {
 
 // newCofigLoggerProvider builds the logger provider selected by the current
 // OTEL log configuration. The second result reports whether log export is
-// enabled, so callers can skip the bridge that feeds the provider.
+// enabled, so callers can skip the export path that feeds the provider.
 //
 // Export is off unless OTEL_LOGS_EXPORTER asks for it, and always off when
 // OTEL_SDK_DISABLED is true: an exporter built with the spec defaults targets
@@ -225,7 +225,7 @@ var filepathAbs = filepath.Abs
 //
 // The returned provider is never nil on success. Log export is disabled unless
 // OTEL_LOGS_EXPORTER selects an exporter, in which case the provider carries no
-// processor and the OpenTelemetry bridge is not attached to the slog handler.
+// processor and the slog handler exports nothing.
 //
 // When running the application as a server, logging is already initialized
 // automatically, so calling this function manually is not necessary.
@@ -249,15 +249,11 @@ func InitLogger(ctx context.Context, dir string) (*sdklog.LoggerProvider, error)
 		return nil, fmt.Errorf("failed to create logger provider: %v", err)
 	}
 
-	// Attach the bridge only when something consumes it, so a disabled export
+	// Attach the exporter only when something consumes it, so a disabled export
 	// costs nothing per record instead of building records that are dropped.
-	var otelHandlers []slog.Handler
+	var exporter otellog.Logger
 	if exportEnabled {
-		otelHandlers = append(otelHandlers, otelslog.NewHandler(
-			instrumentationName,
-			otelslog.WithLoggerProvider(lp),
-			otelslog.WithSource(true),
-		))
+		exporter = lp.Logger(instrumentationName)
 		// Publish the provider globally so code using go.opentelemetry.io/otel/log
 		// directly (other Forge modules, third-party libraries) reaches the same
 		// pipeline instead of a no-op.
@@ -281,7 +277,8 @@ func InitLogger(ctx context.Context, dir string) (*sdklog.LoggerProvider, error)
 	}
 
 	// ---- New handler slog ----
-	newJsonHandler := newHandler(setLevel(), mw, otelHandlers...)
+	newJsonHandler := newHandler(setLevel(), mw)
+	newJsonHandler.exporter = exporter
 	slog.SetDefault(slog.New(newJsonHandler))
 
 	return lp, nil

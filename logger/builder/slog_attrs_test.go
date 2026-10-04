@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"reflect"
 	"testing"
-
-	"github.com/PointerByte/forge-go/logger/sanitizer"
 )
 
 // --- attribute flattening ---
@@ -136,92 +134,5 @@ func TestAddSlogAttrsSkipsEmptyGroupsBeforeCreatingNesting(t *testing.T) {
 	want := map[string]any{"outer": map[string]any{"k": "v"}}
 	if !reflect.DeepEqual(target, want) {
 		t.Fatalf("addSlogAttrs() = %#v, want %#v", target, want)
-	}
-}
-
-// --- attribute sanitization ---
-
-func TestSanitizeSlogAttrDisabledSanitizerIsIdentity(t *testing.T) {
-	disabled := sanitizer.New(nil)
-	if disabled.Enabled() {
-		t.Fatal("sanitizer.New(nil).Enabled() = true, want false")
-	}
-
-	attr := slog.String("password", "hunter2")
-	if got := sanitizeSlogAttr(attr, disabled); !got.Equal(attr) {
-		t.Fatalf("sanitizeSlogAttr() = %#v, want the attribute unchanged", got)
-	}
-}
-
-func TestSanitizeSlogAttrRedactsConfiguredKeys(t *testing.T) {
-	active := sanitizer.New([]string{"password"})
-
-	redacted := sanitizeSlogAttr(slog.String("password", "hunter2"), active)
-	if got := redacted.Value.Any(); got != sanitizer.RedactedValue {
-		t.Fatalf("sanitized password = %#v, want %q", got, sanitizer.RedactedValue)
-	}
-
-	kept := sanitizeSlogAttr(slog.String("user", "ada"), active)
-	if got := kept.Value.Any(); got != "ada" {
-		t.Fatalf("sanitized user = %#v, want \"ada\"", got)
-	}
-}
-
-func TestSanitizeSlogAttrRedactsInsideGroups(t *testing.T) {
-	active := sanitizer.New([]string{"password"})
-
-	sanitized := sanitizeSlogAttr(
-		slog.Group("credentials", slog.String("password", "hunter2"), slog.String("user", "ada")),
-		active,
-	)
-
-	flattened := map[string]any{}
-	addSlogAttr(flattened, sanitized)
-	group, ok := flattened["credentials"].(map[string]any)
-	if !ok {
-		t.Fatalf("flattened[credentials] = %T, want map[string]any", flattened["credentials"])
-	}
-	if group["password"] != sanitizer.RedactedValue {
-		t.Fatalf("group[password] = %#v, want %q", group["password"], sanitizer.RedactedValue)
-	}
-	if group["user"] != "ada" {
-		t.Fatalf("group[user] = %#v, want \"ada\"", group["user"])
-	}
-}
-
-func TestSanitizeSlogAttrHandlesInlineGroupsAndEmptyAttrs(t *testing.T) {
-	active := sanitizer.New([]string{"password"})
-
-	if got := sanitizeSlogAttr(slog.Attr{}, active); !got.Equal(slog.Attr{}) {
-		t.Fatalf("sanitizeSlogAttr(empty) = %#v, want the empty attribute", got)
-	}
-
-	inline := sanitizeSlogAttr(
-		slog.Attr{Value: slog.GroupValue(slog.String("password", "hunter2"), slog.String("user", "ada"))},
-		active,
-	)
-	if inline.Key != "" || inline.Value.Kind() != slog.KindGroup {
-		t.Fatalf("sanitizeSlogAttr(inline group) = %#v, want an inline group", inline)
-	}
-
-	flattened := map[string]any{}
-	addSlogAttr(flattened, inline)
-	if flattened["password"] != sanitizer.RedactedValue || flattened["user"] != "ada" {
-		t.Fatalf("flattened inline group = %#v, want only the password redacted", flattened)
-	}
-}
-
-func TestSlogAttrValueFlattensGroupsForSanitization(t *testing.T) {
-	group := slogAttrValue(slog.Group("db", slog.String("host", "local")))
-	want := map[string]any{"host": "local"}
-	if !reflect.DeepEqual(group, want) {
-		t.Fatalf("slogAttrValue(group) = %#v, want %#v", group, want)
-	}
-
-	if got := slogAttrValue(slog.String("k", "v")); got != "v" {
-		t.Fatalf("slogAttrValue(scalar) = %#v, want \"v\"", got)
-	}
-	if got := slogAttrValue(slog.Any("cause", errors.New("boom"))); got != "boom" {
-		t.Fatalf("slogAttrValue(error) = %#v, want \"boom\"", got)
 	}
 }

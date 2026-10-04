@@ -3,8 +3,8 @@ module github.com/PointerByte/forge-go
 go 1.26.0
 
 require (
-	github.com/PointerByte/forge-go/logger v1.0.8
-	github.com/PointerByte/forge-go/security v1.0.8
+	github.com/PointerByte/forge-go/logger v1.0.9
+	github.com/PointerByte/forge-go/security v1.0.9
 	github.com/gin-contrib/cors v1.7.9
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang/mock v1.6.0
@@ -35,7 +35,7 @@ require (
 )
 
 require (
-	github.com/PointerByte/forge-go/encrypt v1.0.8 // indirect
+	github.com/PointerByte/forge-go/encrypt v1.0.9 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.4 // indirect
@@ -81,7 +81,6 @@ require (
 	github.com/ugorji/go/codec v1.3.2 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect
-	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 // indirect
 	go.opentelemetry.io/otel/log v0.22.0 // indirect

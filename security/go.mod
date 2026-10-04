@@ -11,8 +11,8 @@ require (
 require go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
 
 require (
-	github.com/PointerByte/forge-go/encrypt v1.0.8
-	github.com/PointerByte/forge-go/logger v1.0.8 // indirect
+	github.com/PointerByte/forge-go/encrypt v1.0.9
+	github.com/PointerByte/forge-go/logger v1.0.9 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.4 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
@@ -51,7 +51,6 @@ require (
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 // indirect
 	go.opentelemetry.io/otel/log v0.22.0 // indirect

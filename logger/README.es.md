@@ -105,7 +105,12 @@ Claves principales:
 - `logger.level`: `debug`, `info`, `warn` o `error`
 - `logger.ignoredHeaders`: headers filtrados de los details estructurados
 - `logger.formatter`: `json`, `text` o un template Go custom
-- `logger.formatDate`: layout de timestamp
+- `logger.formatDate`: layout Go del campo `timestamp`, tanto en la linea
+  local como en el body exportado. El default es
+  `viperdata.DefaultFormatDate`, `2006-01-02T15:04:05.000`: hora local con
+  milisegundos y **sin offset de zona**, que no es RFC 3339. Los consumidores
+  que validan RFC 3339 necesitan un layout con offset, como
+  `2006-01-02T15:04:05.000Z07:00`; cambiarlo tambien cambia la linea local.
 - `logger.bodyCaptureMaxBytes`: maximo de bytes retenidos de forma independiente para un request o response habilitado; valores ausentes o no positivos usan 65536
 - `logger.sensibleKeys`: keys o fragmentos de key case-insensitive cuyos valores se redactan antes de formatear
 - `logger.rotate.*`: configuracion de rotacion de archivos con `lumberjack`
@@ -186,8 +191,8 @@ cuando no hay error, asi que `defer lp.Shutdown(ctx)` siempre es seguro.
 Los atributos ligados y por registro de `slog` se emiten bajo el objeto
 opcional `attributes`, preservando la anidacion de `WithGroup`. Los mensajes y
 atributos se sanitizan antes de la salida local y la exportacion OpenTelemetry.
-Los errores del formatter, writer y handlers secundarios se retornan mediante
-el contrato del handler en lugar de causar panic.
+Los errores del formatter, writer y de codificacion de la exportacion se
+retornan mediante el contrato del handler en lugar de causar panic.
 
 ## Exportacion De Logs OpenTelemetry
 
@@ -197,7 +202,7 @@ ya usan `OTEL_TRACES_EXPORTER` y `OTEL_METRICS_EXPORTER` en el modulo principal:
 
 | `OTEL_LOGS_EXPORTER`      | Comportamiento                                                |
 | ------------------------- | ------------------------------------------------------------- |
-| sin definir, vacio, `none`| Sin exportador, sin procesador y sin puente de OpenTelemetry   |
+| sin definir, vacio, `none`| Sin exportador, sin procesador y nada exportado                |
 | `otlp`                    | Exportador OTLP detras de un batch processor                   |
 | cualquier otro valor      | `InitLogger` devuelve error                                    |
 
@@ -226,9 +231,33 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 > transporte se volvia la linea de log dominante. Define
 > `OTEL_LOGS_EXPORTER=otlp` para recuperar el comportamiento anterior.
 
-Cuando la exportacion esta desactivada, el puente `otelslog` no se engancha al
-handler instalado, asi que los registros no tienen coste adicional en vez de
+Cuando la exportacion esta desactivada, el handler instalado no tiene
+exportador, asi que los registros no tienen coste adicional en vez de
 construirse y descartarse.
+
+### Registros Exportados
+
+Cada llamada de log produce una linea local y, con la exportacion activa, un
+registro de log OTLP construido a partir de la misma entrada:
+
+- **Body**: la entrada como mapa estructurado, con las claves, anidacion,
+  valores y sanitizacion de la linea JSON local (`details`, `process`,
+  `attributes`, `traceID`, `spanID`, `timestamp`, `level`, `message`,
+  `method`, `line`, `latency`), sea cual sea el `logger.formatter` local. Los
+  numeros enteros se exportan como enteros.
+- **Contexto de traza**: `trace_id` y `span_id` son el `traceID` y `spanID` de
+  la entrada, que los middlewares guardan una vez por peticion, no el span vivo
+  en el contexto al escribir el log. Una entrada sin `spanID` lleva un id de
+  correlacion de respaldo, y su registro no tiene contexto de traza.
+- **Origen**: `code.function.name` y `code.line.number` son el `method` y
+  `line` de la entrada. `code.file.path` no se exporta.
+- **Timestamp y severidad**: el timestamp del registro es la hora de la
+  entrada, y su severidad sigue al nivel.
+
+Los atributos de `slog` se exportan dentro del objeto `attributes` del body, no
+como atributos del registro. Las trazas `process` completadas se limpian en
+cuanto una entrada que las contiene llega a cualquiera de los dos destinos, asi
+que nunca se exportan dos veces.
 
 ## Middleware Gin
 

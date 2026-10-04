@@ -50,26 +50,6 @@ type yieldingBuffer struct {
 	buf bytes.Buffer
 }
 
-type errorHandler struct {
-	err error
-}
-
-func (h errorHandler) Enabled(context.Context, slog.Level) bool {
-	return true
-}
-
-func (h errorHandler) Handle(context.Context, slog.Record) error {
-	return h.err
-}
-
-func (h errorHandler) WithAttrs([]slog.Attr) slog.Handler {
-	return h
-}
-
-func (h errorHandler) WithGroup(string) slog.Handler {
-	return h
-}
-
 func (w *yieldingBuffer) Write(p []byte) (int, error) {
 	w.mux.Lock()
 	n, err := w.buf.Write(p)
@@ -120,14 +100,8 @@ func TestNewHandler(t *testing.T) {
 	if h1.mux == nil {
 		t.Fatal("mutex is nil")
 	}
-	if len(h1.handlers) != 0 {
-		t.Fatalf("handlers len = %d, want 0", len(h1.handlers))
-	}
-
-	dummy := slog.NewTextHandler(&bytes.Buffer{}, nil)
-	h2 := newHandler(slog.LevelDebug, &bytes.Buffer{}, dummy)
-	if len(h2.handlers) != 1 {
-		t.Fatalf("handlers len = %d, want 1", len(h2.handlers))
+	if h1.exporter != nil {
+		t.Fatalf("exporter = %T, want none", h1.exporter)
 	}
 }
 
@@ -522,8 +496,7 @@ func TestJSONHandlerPreservesGroupsAndSanitizesEverySink(t *testing.T) {
 	viper.Set(string(viperdata.AppAtribute), "test-app")
 
 	var local bytes.Buffer
-	var secondary bytes.Buffer
-	root := newHandler(slog.LevelDebug, &local, slog.NewJSONHandler(&secondary, nil))
+	root, exporter := newExportingHandler(t, &local)
 	derived := root.
 		WithAttrs([]slog.Attr{
 			slog.String("component", "api"),
@@ -575,9 +548,17 @@ func TestJSONHandlerPreservesGroupsAndSanitizesEverySink(t *testing.T) {
 		t.Fatalf("request attributes = %#v", request)
 	}
 
+	records := exporter.Records()
+	if len(records) != 1 {
+		t.Fatalf("exported records = %d, want 1", len(records))
+	}
+	exported, err := json.Marshal(bodyInterface(records[0].Body()))
+	if err != nil {
+		t.Fatalf("encode exported body: %v", err)
+	}
 	for name, output := range map[string]string{
-		"local":     local.String(),
-		"secondary": secondary.String(),
+		"local":    local.String(),
+		"exported": string(exported),
 	} {
 		for _, secret := range []string{"bound-secret", "message-secret", "record@example.com", "nested-secret"} {
 			if strings.Contains(output, secret) {
@@ -590,16 +571,29 @@ func TestJSONHandlerPreservesGroupsAndSanitizesEverySink(t *testing.T) {
 	}
 }
 
-func TestJSONHandlerReturnsSecondaryHandlerError(t *testing.T) {
+func TestJSONHandlerReturnsExportEncodingError(t *testing.T) {
 	resetBuilderViper()
 	t.Cleanup(resetBuilderViper)
 	viper.Set(string(viperdata.LoggerFormatterAtribute), "json")
 	viper.Set(string(viperdata.AppAtribute), "test-app")
 
-	wantErr := errors.New("secondary failed")
-	handler := newHandler(slog.LevelDebug, io.Discard, errorHandler{err: wantErr})
-	if err := handler.Handle(newTestCtx(), slog.NewRecord(time.Now(), slog.LevelInfo, "message", 0)); !errors.Is(err, wantErr) {
-		t.Fatalf("Handle() error = %v, want %v", err, wantErr)
+	handler, exporter := newExportingHandler(t, io.Discard)
+	ctx := newTestCtx()
+	process := &formatter.Process{System: "test-app", Process: "kept"}
+	ctx.TraceInit(process)
+	ctx.TraceEnd(process)
+
+	record := slog.NewRecord(time.Now(), slog.LevelInfo, "bad attribute", 0)
+	record.AddAttrs(slog.Any("unsupported", make(chan int)))
+	err := handler.Handle(ctx, record)
+	if err == nil || !strings.Contains(err.Error(), "encode exported entry") || !strings.Contains(err.Error(), "format entry") {
+		t.Fatalf("Handle() error = %v, want both sinks to report the encoding error", err)
+	}
+	if records := exporter.Records(); len(records) != 0 {
+		t.Fatalf("exported records = %d, want 0", len(records))
+	}
+	if remaining := ctx.Processes(); len(remaining) != 1 {
+		t.Fatalf("processes = %d, want 1 kept for an entry no sink received", len(remaining))
 	}
 }
 

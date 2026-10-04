@@ -105,7 +105,12 @@ Main keys:
 - `logger.level`: `debug`, `info`, `warn`, or `error`
 - `logger.ignoredHeaders`: headers filtered from structured request details
 - `logger.formatter`: `json`, `text`, or a custom Go template
-- `logger.formatDate`: timestamp layout
+- `logger.formatDate`: Go time layout of the `timestamp` field, in both the
+  local line and the exported log body. The default is
+  `viperdata.DefaultFormatDate`, `2006-01-02T15:04:05.000`: local time with
+  milliseconds and **no zone offset**, which is not RFC 3339. Consumers that
+  validate RFC 3339 need a layout with an offset, such as
+  `2006-01-02T15:04:05.000Z07:00`; changing it also changes the local line.
 - `logger.bodyCaptureMaxBytes`: maximum bytes retained independently for an enabled request or response body; absent and non-positive values use 65536
 - `logger.sensibleKeys`: case-insensitive keys or key fragments whose values are redacted before formatting
 - `logger.rotate.*`: file rotation settings backed by `lumberjack`
@@ -185,7 +190,7 @@ can shut it down gracefully. The returned provider is never nil on success, so
 Bound and record-level `slog` attributes are emitted under the optional
 `attributes` object, with `WithGroup` nesting preserved. Messages and
 attributes are sanitized before both local output and OpenTelemetry export.
-Formatter, writer, and secondary-handler failures are returned by the handler
+Formatter, writer, and export encoding failures are returned by the handler
 contract rather than panicking.
 
 ## OpenTelemetry Log Export
@@ -196,7 +201,7 @@ selects an exporter, matching the `none` default that `OTEL_TRACES_EXPORTER` and
 
 | `OTEL_LOGS_EXPORTER` | Behavior                                                    |
 | -------------------- | ----------------------------------------------------------- |
-| unset, empty, `none` | No exporter, no processor, no OpenTelemetry bridge attached  |
+| unset, empty, `none` | No exporter, no processor, nothing exported                   |
 | `otlp`               | OTLP exporter behind a batch processor                       |
 | anything else        | `InitLogger` returns an error                                |
 
@@ -224,9 +229,31 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
 > became the dominant log line. Set `OTEL_LOGS_EXPORTER=otlp` to restore the
 > previous behavior.
 
-When export is disabled, the `otelslog` bridge is not attached to the installed
-handler at all, so records cost nothing extra rather than being built and
-dropped.
+When export is disabled, the installed handler has no exporter at all, so
+records cost nothing extra rather than being built and dropped.
+
+### Exported Records
+
+Each log call produces one local line and, with export enabled, one OTLP log
+record built from the same entry:
+
+- **Body**: the entry as a structured map, with the keys, nesting, values, and
+  sanitization of the local JSON line (`details`, `process`, `attributes`,
+  `traceID`, `spanID`, `timestamp`, `level`, `message`, `method`, `line`,
+  `latency`), whatever `logger.formatter` prints locally. Integral numbers are
+  exported as integers.
+- **Trace context**: `trace_id` and `span_id` are the entry's `traceID` and
+  `spanID`, which the middlewares record once per request, not the span live in
+  the context when the log is written. An entry without `spanID` carries a
+  fallback correlation id, and its record has no trace context.
+- **Source**: `code.function.name` and `code.line.number` are the entry's
+  `method` and `line`. `code.file.path` is not exported.
+- **Timestamp and severity**: the record's timestamp is the entry's time, and
+  its severity follows the level.
+
+`slog` attributes are exported inside the body's `attributes` object, not as
+record attributes. Completed `process` traces are cleared once an entry carrying
+them reaches either sink, so they are never exported twice.
 
 ## Gin Middleware
 

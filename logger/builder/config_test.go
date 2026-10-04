@@ -395,7 +395,7 @@ func Test_newCofigLoggerProvider_disabledProviderIsUsable(t *testing.T) {
 }
 
 // installedHandler returns the handler InitLogger installed as the slog
-// default, so tests can assert which secondary handlers it forwards to.
+// default, so tests can assert whether it exports.
 func installedHandler(t *testing.T) *jsonHandler {
 	t.Helper()
 
@@ -470,7 +470,7 @@ func TestInitLogger(t *testing.T) {
 			},
 		},
 		{
-			name:       "enabled export attaches the otel bridge handler",
+			name:       "enabled export attaches the otel exporter",
 			ctx:        context.Background(),
 			dir:        tmpDir,
 			setupViper: rotationViper,
@@ -488,13 +488,13 @@ func TestInitLogger(t *testing.T) {
 			validate: func(t *testing.T, lp *sdklog.LoggerProvider, err error) {
 				t.Helper()
 
-				if handlers := installedHandler(t).handlers; len(handlers) != 1 {
-					t.Fatalf("installed secondary handlers = %d, want 1", len(handlers))
+				if installedHandler(t).exporter == nil {
+					t.Fatal("installed handler has no exporter with export enabled")
 				}
 			},
 		},
 		{
-			name:       "disabled export attaches no otel bridge handler",
+			name:       "disabled export attaches no otel exporter",
 			ctx:        context.Background(),
 			dir:        tmpDir,
 			setupViper: rotationViper,
@@ -515,8 +515,8 @@ func TestInitLogger(t *testing.T) {
 				if lp == nil {
 					t.Fatal("InitLogger() returned nil logger provider with export disabled")
 				}
-				if handlers := installedHandler(t).handlers; len(handlers) != 0 {
-					t.Fatalf("installed secondary handlers = %d, want 0", len(handlers))
+				if exporter := installedHandler(t).exporter; exporter != nil {
+					t.Fatalf("installed handler exporter = %T, want none with export disabled", exporter)
 				}
 				if err := lp.Shutdown(context.Background()); err != nil {
 					t.Fatalf("LoggerProvider.Shutdown() error = %v", err)
@@ -550,8 +550,8 @@ func TestInitLogger(t *testing.T) {
 				if lp == nil {
 					t.Fatal("InitLogger() returned nil logger provider")
 				}
-				if handlers := installedHandler(t).handlers; len(handlers) != 0 {
-					t.Fatalf("installed secondary handlers = %d, want 0", len(handlers))
+				if exporter := installedHandler(t).exporter; exporter != nil {
+					t.Fatalf("installed handler exporter = %T, want none with export disabled", exporter)
 				}
 				if err := lp.Shutdown(context.Background()); err != nil {
 					t.Fatalf("LoggerProvider.Shutdown() error = %v", err)

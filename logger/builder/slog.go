@@ -4,6 +4,7 @@
 package builder
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,10 @@ import (
 	"github.com/PointerByte/forge-go/logger/formatter"
 	"github.com/PointerByte/forge-go/logger/sanitizer"
 	viperdata "github.com/PointerByte/forge-go/logger/viperData"
+	"go.opentelemetry.io/otel/attribute"
+	otellog "go.opentelemetry.io/otel/log"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type handlerOperation struct {
@@ -34,15 +39,16 @@ type jsonHandler struct {
 	w          io.Writer
 	mux        *sync.Mutex
 	operations []handlerOperation
-	handlers   []slog.Handler
+	// exporter receives every entry as an OpenTelemetry log record. It is nil
+	// when log export is disabled, which skips the export path entirely.
+	exporter otellog.Logger
 }
 
-func newHandler(level slog.Level, w io.Writer, handlers ...slog.Handler) *jsonHandler {
+func newHandler(level slog.Level, w io.Writer) *jsonHandler {
 	return &jsonHandler{
-		level:    level,
-		w:        w,
-		mux:      &sync.Mutex{},
-		handlers: append([]slog.Handler(nil), handlers...),
+		level: level,
+		w:     w,
+		mux:   &sync.Mutex{},
 	}
 }
 
@@ -50,96 +56,172 @@ func (h *jsonHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level
 }
 
+// Handle builds the structured entry once and delivers that same entry to the
+// local writer and, when export is enabled, to OpenTelemetry.
 func (h *jsonHandler) Handle(ctx context.Context, record slog.Record) error {
-	logSanitizer := sanitizer.FromViper()
-	localErr := h.writeRecord(ctx, record, logSanitizer)
-	secondaryErr := h.forwardRecord(ctx, record, logSanitizer)
-	return errors.Join(localErr, secondaryErr)
+	if record.Time.IsZero() {
+		record.Time = time.Now()
+	}
+	ctxLogger := New(ctx)
+	entry, err := h.buildEntry(ctxLogger, record, sanitizer.FromViper())
+	if err != nil {
+		return err
+	}
+
+	localErr := h.writeEntry(entry)
+	exported, exportErr := h.exportEntry(ctx, record, entry)
+
+	// Clear the traces carried by an entry once it reached a sink, after every
+	// sink has seen it, so no later entry repeats them.
+	if localErr == nil || exported {
+		ctxLogger.clearProcesses(len(entry.Process))
+	}
+	return errors.Join(localErr, exportErr)
 }
 
-func (h *jsonHandler) writeRecord(ctx context.Context, record slog.Record, logSanitizer sanitizer.Sanitizer) error {
+// buildEntry assembles and sanitizes the entry shared by every sink. It must be
+// called directly from Handle: customLogFormat resolves the caller by stack
+// depth.
+func (h *jsonHandler) buildEntry(ctxLogger *Context, record slog.Record, logSanitizer sanitizer.Sanitizer) (formatter.LogFormat, error) {
 	data := make(map[string]any)
-	ctxLogger := New(ctx)
 	maps.Copy(data, ctxLogger.customLogFormat())
 
-	recordTime := record.Time
-	if recordTime.IsZero() {
-		recordTime = time.Now()
-	}
 	layout, _ := viperdata.GetViperData(string(viperdata.LoggerFormatDateAtribute)).(string)
-	data[string(timestampAtribute)] = recordTime.Format(layout)
+	data[string(timestampAtribute)] = record.Time.Format(layout)
 	data[string(loggerMessage)] = record.Message
 	data[string(levelAtribute)] = record.Level.String()
 
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		return fmt.Errorf("logger: encode structured entry: %w", err)
+		return formatter.LogFormat{}, fmt.Errorf("logger: encode structured entry: %w", err)
 	}
 
 	var logObj formatter.LogFormat
 	if err = json.Unmarshal(jsonBytes, &logObj); err != nil {
-		return fmt.Errorf("logger: decode structured entry: %w", err)
+		return formatter.LogFormat{}, fmt.Errorf("logger: decode structured entry: %w", err)
 	}
 	logObj.Attributes = h.recordAttributes(record)
 	logObj.Latency = ctxLogger.GetLatency()
-	logObj = logSanitizer.LogFormat(logObj)
+	return logSanitizer.LogFormat(logObj), nil
+}
 
+func (h *jsonHandler) writeEntry(entry formatter.LogFormat) error {
 	formatterName, _ := viperdata.GetViperData(string(viperdata.LoggerFormatterAtribute)).(string)
-	jsonBytes, err = formatter.New(formatterName).Format(logObj)
+	jsonBytes, err := formatter.New(formatterName).Format(entry)
 	if err != nil {
 		return fmt.Errorf("logger: format entry: %w", err)
 	}
 	if err = h.writeData(jsonBytes); err != nil {
 		return fmt.Errorf("logger: write entry: %w", err)
 	}
-
-	// Clear only traces included in an entry that reached the local sink.
-	ctxLogger.clearProcesses(len(logObj.Process))
 	return nil
 }
 
-func (h *jsonHandler) forwardRecord(ctx context.Context, record slog.Record, logSanitizer sanitizer.Sanitizer) error {
-	if len(h.handlers) == 0 {
+// exportEntry emits entry as the structured body of one OpenTelemetry log
+// record and reports whether the record was emitted.
+func (h *jsonHandler) exportEntry(ctx context.Context, record slog.Record, entry formatter.LogFormat) (bool, error) {
+	if h.exporter == nil {
+		return false, nil
+	}
+
+	const sevOffset = slog.Level(otellog.SeverityDebug) - slog.LevelDebug
+	severity := otellog.Severity(record.Level + sevOffset)
+	ctx = exportContext(ctx, entry)
+	if !h.exporter.Enabled(ctx, otellog.EnabledParameters{Severity: severity}) {
+		return false, nil
+	}
+
+	body, err := entryBody(entry)
+	if err != nil {
+		return false, fmt.Errorf("logger: encode exported entry: %w", err)
+	}
+
+	var exported otellog.Record
+	exported.SetTimestamp(record.Time)
+	exported.SetSeverity(severity)
+	exported.SetSeverityText(record.Level.String())
+	exported.SetBody(body)
+	exported.AddAttributes(sourceAttributes(entry)...)
+	h.exporter.Emit(ctx, exported)
+	return true, nil
+}
+
+// exportContext sets the span context the exported record is correlated with
+// to the trace and span ids printed in entry. Those ids are stored once per
+// request, while the span live in ctx is usually a descendant started by
+// nested TraceInit calls. When entry carries no span id, its trace id is a
+// fallback correlation id rather than a trace id, and nothing is exported.
+func exportContext(ctx context.Context, entry formatter.LogFormat) context.Context {
+	traceID, traceErr := trace.TraceIDFromHex(entry.TraceID)
+	spanID, spanErr := trace.SpanIDFromHex(entry.SpanID)
+	if traceErr != nil || spanErr != nil {
+		return trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+	}
+
+	config := trace.SpanContextConfig{TraceID: traceID, SpanID: spanID}
+	if live := trace.SpanContextFromContext(ctx); live.TraceID() == traceID {
+		config.TraceFlags = live.TraceFlags()
+	}
+	return trace.ContextWithSpanContext(ctx, trace.NewSpanContext(config))
+}
+
+// sourceAttributes reports the call site printed in entry. The slog record PC
+// cannot be used because it is captured inside the logger itself.
+func sourceAttributes(entry formatter.LogFormat) []attribute.KeyValue {
+	if entry.Method == "" || entry.Line <= 0 {
 		return nil
 	}
-
-	message := record.Message
-	if logSanitizer.Enabled() {
-		if sanitized, ok := logSanitizer.Value(message).(string); ok {
-			message = sanitized
-		}
+	return []attribute.KeyValue{
+		attribute.String(string(semconv.CodeFunctionNameKey), entry.Method),
+		attribute.Int(string(semconv.CodeLineNumberKey), entry.Line),
 	}
-	forwarded := slog.NewRecord(record.Time, record.Level, message, record.PC)
-	record.Attrs(func(attr slog.Attr) bool {
-		forwarded.AddAttrs(sanitizeSlogAttr(attr, logSanitizer))
-		return true
-	})
+}
 
-	var handlerErrors []error
-	for index, rootHandler := range h.handlers {
-		if rootHandler == nil {
-			continue
-		}
-		derived := rootHandler
-		for _, operation := range h.operations {
-			if operation.isGroup() {
-				derived = derived.WithGroup(operation.group)
-				continue
-			}
-			attrs := make([]slog.Attr, 0, len(operation.attrs))
-			for _, attr := range operation.attrs {
-				attrs = append(attrs, sanitizeSlogAttr(attr, logSanitizer))
-			}
-			derived = derived.WithAttrs(attrs)
-		}
-		if !derived.Enabled(ctx, record.Level) {
-			continue
-		}
-		if err := derived.Handle(ctx, forwarded); err != nil {
-			handlerErrors = append(handlerErrors, fmt.Errorf("logger: secondary handler %d: %w", index, err))
-		}
+// entryBody converts entry into a structured log body. It goes through the
+// JSON encoding of entry so the body has the same keys, omissions and nesting
+// as the JSON line written locally. Integral numbers stay integers.
+func entryBody(entry formatter.LogFormat) (attribute.Value, error) {
+	jsonBytes, err := json.Marshal(entry)
+	if err != nil {
+		return attribute.Value{}, err
 	}
-	return errors.Join(handlerErrors...)
+	decoder := json.NewDecoder(bytes.NewReader(jsonBytes))
+	decoder.UseNumber()
+	var decoded any
+	if err = decoder.Decode(&decoded); err != nil {
+		return attribute.Value{}, err
+	}
+	return bodyValue(decoded), nil
+}
+
+func bodyValue(value any) attribute.Value {
+	switch cast := value.(type) {
+	case map[string]any:
+		kvs := make([]attribute.KeyValue, 0, len(cast))
+		for key, child := range cast {
+			kvs = append(kvs, attribute.KeyValue{Key: attribute.Key(key), Value: bodyValue(child)})
+		}
+		return attribute.MapValue(kvs...)
+	case []any:
+		values := make([]attribute.Value, 0, len(cast))
+		for _, child := range cast {
+			values = append(values, bodyValue(child))
+		}
+		return attribute.SliceValue(values...)
+	case string:
+		return attribute.StringValue(cast)
+	case bool:
+		return attribute.BoolValue(cast)
+	case json.Number:
+		if integer, err := cast.Int64(); err == nil {
+			return attribute.Int64Value(integer)
+		}
+		float, _ := cast.Float64()
+		return attribute.Float64Value(float)
+	default:
+		// JSON null.
+		return attribute.Value{}
+	}
 }
 
 func (h *jsonHandler) recordAttributes(record slog.Record) map[string]any {
@@ -229,41 +311,6 @@ func slogValue(value slog.Value) any {
 		}
 	}
 	return value.Any()
-}
-
-func sanitizeSlogAttr(attr slog.Attr, logSanitizer sanitizer.Sanitizer) slog.Attr {
-	if !logSanitizer.Enabled() || attr.Equal(slog.Attr{}) {
-		return attr
-	}
-
-	value := attr.Value.Resolve()
-	if value.Kind() == slog.KindGroup && attr.Key == "" {
-		children := value.Group()
-		sanitized := make([]slog.Attr, 0, len(children))
-		for _, child := range children {
-			sanitized = append(sanitized, sanitizeSlogAttr(child, logSanitizer))
-		}
-		return slog.Attr{Value: slog.GroupValue(sanitized...)}
-	}
-
-	wrapped := map[string]any{attr.Key: slogAttrValue(attr)}
-	sanitized, ok := logSanitizer.Value(wrapped).(map[string]any)
-	if !ok {
-		return slog.String(attr.Key, sanitizer.RedactedValue)
-	}
-	return slog.Any(attr.Key, sanitized[attr.Key])
-}
-
-func slogAttrValue(attr slog.Attr) any {
-	value := attr.Value.Resolve()
-	if value.Kind() != slog.KindGroup {
-		return slogValue(value)
-	}
-	group := make(map[string]any)
-	for _, child := range value.Group() {
-		addSlogAttr(group, child)
-	}
-	return group
 }
 
 func (h *jsonHandler) writeData(jsonBytes []byte) error {

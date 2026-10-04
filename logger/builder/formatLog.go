@@ -273,15 +273,13 @@ func (c *Context) prepareLog() bool {
 	return true
 }
 
+// log is called directly by every public logging method, never through another
+// helper: the caller reported in an entry is found at a fixed stack depth.
 func (c *Context) log(level slog.Level, message string) {
 	if !c.prepareLog() {
 		return
 	}
 	slog.Log(c, level, message)
-}
-
-func (c *Context) logf(level slog.Level, format string, args ...any) {
-	c.log(level, fmt.Sprintf(format, args...))
 }
 
 // Info logs an informational message using the current context.
@@ -298,7 +296,7 @@ func (c *Context) Info(message string) {
 
 // Infof logs a formatted informational message using the current context.
 func (c *Context) Infof(format string, args ...any) {
-	c.logf(slog.LevelInfo, format, args...)
+	c.log(slog.LevelInfo, fmt.Sprintf(format, args...))
 }
 
 // Debug logs a debug-level message using the current context.
@@ -319,7 +317,7 @@ func (c *Context) Debug(message string) {
 
 // Debugf logs a formatted debug-level message using the current context.
 func (c *Context) Debugf(format string, args ...any) {
-	c.logf(slog.LevelDebug, format, args...)
+	c.log(slog.LevelDebug, fmt.Sprintf(format, args...))
 }
 
 // Warn logs a warning message using the current context.
@@ -336,7 +334,7 @@ func (c *Context) Warn(message string) {
 
 // Warnf logs a formatted warning message using the current context.
 func (c *Context) Warnf(format string, args ...any) {
-	c.logf(slog.LevelWarn, format, args...)
+	c.log(slog.LevelWarn, fmt.Sprintf(format, args...))
 }
 
 // Error logs an error message using `slog` with the current context.
@@ -354,5 +352,5 @@ func (c *Context) Error(err error) {
 
 // Errorf logs a formatted error message using the current context.
 func (c *Context) Errorf(format string, args ...any) {
-	c.logf(slog.LevelError, format, args...)
+	c.log(slog.LevelError, fmt.Sprintf(format, args...))
 }
