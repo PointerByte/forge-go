@@ -485,14 +485,15 @@ func TestModeTestEmitsNothingToEitherSink(t *testing.T) {
 // R8.
 func TestFormatDateAppliesToBothSinks(t *testing.T) {
 	for name, layout := range map[string]string{
-		"default": "",
-		"rfc3339": "2006-01-02T15:04:05.000Z07:00",
+		"default":   "",
+		"no-offset": "2006-01-02T15:04:05.000",
 	} {
 		t.Run(name, func(t *testing.T) {
 			local, exporter := installExportingHandler(t)
 			viper.Set(string(viperdata.LoggerFormatDateAtribute), layout)
 			viperdata.ResetViperDataSingleton()
-			if layout == "" {
+			isDefault := layout == ""
+			if isDefault {
 				layout = viperdata.DefaultFormatDate
 			}
 
@@ -503,6 +504,9 @@ func TestFormatDateAppliesToBothSinks(t *testing.T) {
 			parsed, err := time.ParseInLocation(layout, timestamp, time.Local)
 			if err != nil {
 				t.Fatalf("timestamp %q does not use layout %q: %v", timestamp, layout, err)
+			}
+			if _, err := time.Parse(time.RFC3339Nano, timestamp); isDefault && err != nil {
+				t.Fatalf("default timestamp %q is not RFC 3339: %v", timestamp, err)
 			}
 			if !parsed.Equal(record.Timestamp().Truncate(time.Millisecond)) {
 				t.Fatalf("timestamp %s, want the exported record time %s", parsed, record.Timestamp())

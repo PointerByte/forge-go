@@ -107,10 +107,10 @@ Claves principales:
 - `logger.formatter`: `json`, `text` o un template Go custom
 - `logger.formatDate`: layout Go del campo `timestamp`, tanto en la linea
   local como en el body exportado. El default es
-  `viperdata.DefaultFormatDate`, `2006-01-02T15:04:05.000`: hora local con
-  milisegundos y **sin offset de zona**, que no es RFC 3339. Los consumidores
-  que validan RFC 3339 necesitan un layout con offset, como
-  `2006-01-02T15:04:05.000Z07:00`; cambiarlo tambien cambia la linea local.
+  `viperdata.DefaultFormatDate`, `2006-01-02T15:04:05.000Z07:00`: hora local
+  con milisegundos y offset de zona (`Z` en UTC), que es RFC 3339 valido.
+  Configurar un layout sin offset, como `2006-01-02T15:04:05.000`, tambien
+  cambia la linea local y rompe a los consumidores que validan RFC 3339.
 - `logger.bodyCaptureMaxBytes`: maximo de bytes retenidos de forma independiente para un request o response habilitado; valores ausentes o no positivos usan 65536
 - `logger.sensibleKeys`: keys o fragmentos de key case-insensitive cuyos valores se redactan antes de formatear
 - `logger.rotate.*`: configuracion de rotacion de archivos con `lumberjack`

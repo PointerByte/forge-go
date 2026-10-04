@@ -17,11 +17,10 @@ var (
 )
 
 // DefaultFormatDate is the timestamp layout used when logger.formatDate is
-// absent or empty. It renders local time with milliseconds and no zone offset,
-// for example "2026-10-04T11:58:41.680", which is not RFC 3339. Consumers that
-// validate RFC 3339 timestamps need logger.formatDate set to a layout with an
-// offset, such as "2006-01-02T15:04:05.000Z07:00".
-const DefaultFormatDate = "2006-01-02T15:04:05.000"
+// absent or empty. It renders local time with milliseconds and the zone offset,
+// for example "2026-10-04T11:58:41.680-05:00" ("Z" in UTC), which is valid
+// RFC 3339.
+const DefaultFormatDate = "2006-01-02T15:04:05.000Z07:00"
 
 // DefaultBodyCaptureMaxBytes is the per-side request or response capture limit
 // used when logger.bodyCaptureMaxBytes is absent or non-positive.
