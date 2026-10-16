@@ -33,6 +33,12 @@ La documentacion en ingles esta disponible en [README.md](./README.md).
 - [cmd/qgo](./cmd/qgo/README.es.md): CLI para generar servicios Gin y gRPC
 - [cmd/go-openssl](./cmd/go-openssl/README.es.md): CLI para generar y leer certificados y llaves PEM
 
+El directorio `share/` contiene trabajo de investigacion y de componentes
+WebAssembly que no forma parte de la API estable.
+[share/portable](./share/portable/README.es.md) es el nucleo portable sin
+dependencias y forma parte del workspace de Go; los demas directorios de
+`share/` son pruebas de concepto con sus propios README y archivos de evidencia.
+
 ## Instalacion
 
 Instalar el modulo raiz:
@@ -179,7 +185,7 @@ logger:
   dir: logs
   level: info
   formatter: json
-  formatDate: "2006-01-02T15:04:05.000"
+  formatDate: "2006-01-02T15:04:05.000Z07:00"
   ignoredHeaders:
     - Authorization
     - Cookie
@@ -311,6 +317,10 @@ Valores de client-auth soportados: `no_client_cert`, `request_client_cert`,
 - `server.grpc.mtls.enable`: habilita validacion mTLS
 - `server.grpc.mtls.clientCAFile`: archivo CA para validar certificados cliente
 - `server.grpc.mtls.clientAuth`: politica de certificados cliente
+- `server.grpc.LoggerWithConfig.enabled`: habilita logs estructurados de requests gRPC
+- `server.grpc.LoggerWithConfig.SkipFunction`: metodos gRPC omitidos por el
+  logger de requests, por nombre (`SayHello`) o metodo completo
+  (`/pkg.Service/SayHello`)
 
 ### Clientes
 
@@ -336,18 +346,29 @@ despliegues locales/de prueba compatibles.
 
 ### Logger, Traces y JWT
 
-- `logger.dir`: directorio de archivos de log
-- `logger.level`: nivel minimo como `debug`, `info`, `warn` o `error`
-- `logger.ignoredHeaders`: headers removidos de logs estructurados
-- `logger.formatter`: formato de salida, normalmente `json` o `text`
+- `logger.dir`: directorio del archivo de log rotado, llamado `<app.name>.log`
+- `logger.level`: nivel minimo: `debug`, `info`, `warn` o `error`; cualquier
+  otro valor usa `info`
+- `logger.ignoredHeaders`: headers removidos de logs estructurados, sumados a
+  una lista incorporada (`Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key` y
+  otros headers de credenciales) que no se puede acortar
+- `logger.sensibleKeys`: claves cuyos valores se redactan, sumadas a una lista
+  incorporada de claves de credenciales como `password`, `token` y `secret`
+- `logger.formatter`: formato de salida: `json`, `text` o un template Go propio
+- `logger.formatDate`: layout Go del `timestamp` del log; por defecto
+  `2006-01-02T15:04:05.000Z07:00` (RFC 3339 con milisegundos)
 - `logger.bodyCaptureMaxBytes`: prefijo maximo de request o respuesta retenido
   en logs estructurados; 65,536 bytes por defecto
 - `logger.rotate.*`: configuracion de rotacion de archivos
 - `traces.SkipPaths`: rutas HTTP omitidas por el middleware OpenTelemetry de Gin
-- `jwt.enable`: habilita validacion JWT en middleware
-- `jwt.transport`: origen del token, normalmente `header` o `cookie`
-- `jwt.cookie.name`: nombre de cookie cuando `jwt.transport` es `cookie`
-- `jwt.algorithm`: algoritmo de firma como `HS256`, `RS256`, `PS256` o `EdDSA`; requerido cuando usas `jwt.keys.*`
+- `jwt.enable`: cuando vale `false` explicitamente, los middlewares e
+  interceptores JWT de `security` dejan pasar todas las requests
+- `jwt.transport`: informativa; el bootstrap Gin la inicializa en `header`, pero
+  ningun paquete de forge-go la lee. El origen del token se elige instalando
+  `RequireJWT` (header) o `RequireJWTCookie` (cookie)
+- `jwt.cookie.name`: cookie que lee `RequireJWTCookie`; por defecto `access_token`
+- `jwt.algorithm`: algoritmo de firma: `HS256`, `RS256`, `PS256` o `EdDSA`, sin
+  distinguir mayusculas; requerido por todo servicio JWT configurado desde viper
 - `jwt.hmac.secret`: secreto compartido para `HS256`
 - `jwt.keys.private_key`, `jwt.keys.public_key`: valores de llaves asimetricas o rutas PEM interpretadas segun `jwt.algorithm`
 - `jwt.rsa.*`, `jwt.eddsa.*`: rutas legacy de llaves asimetricas mantenidas por compatibilidad
@@ -357,6 +378,14 @@ despliegues locales/de prueba compatibles.
 `config/server/gin.CreateApp()` carga configuracion, inicializa logger y
 OpenTelemetry, crea el `gin.Engine` compartido, registra middlewares comunes,
 crea grupos desde `server.gin.groups` y registra `/health` en cada grupo.
+
+La cadena de middlewares es, en orden: `cors.Default()` (permite cualquier
+origen), `gin.Recovery()`, el rate limiter,
+`security/middlewares.SecurityHeaders()`, el middleware OpenTelemetry y los tres
+middlewares del logger (`InitLogger`, `LoggerWithConfig`, `CaptureBody`). JWT no
+se instala automaticamente: agrega `middlewares.RequireJWT()` o
+`middlewares.RequireJWTCookie()` del modulo `security` a los grupos que lo
+necesiten. Usa `GetEngine()` para acceder al engine despues de `CreateApp`.
 
 ```go
 package main
@@ -385,9 +414,24 @@ func main() {
 
 ## Servidor gRPC
 
-`config/server/grpc` carga configuracion en `Serve()`, resuelve
-`server.grpc.port`, agrega interceptores de logging y OpenTelemetry, soporta
-TLS y mTLS, y hace apagado graceful ante senales del proceso.
+`config/server/grpc.NewIConfig(...)` carga configuracion e inicializa logger y
+OpenTelemetry. `Serve()` escucha en la direccion definida con `SetAddress`, el
+listener definido con `SetListener` o `server.grpc.port`, y hace apagado
+graceful ante senales del proceso. TLS y mTLS salen de `server.grpc.tls.*` y
+`server.grpc.mtls.*`.
+
+Todo servidor recibe el stats handler oficial de `otelgrpc`, que abre un span de
+servidor por RPC, mas el rate limiter y los tres interceptores del logger. Los
+interceptores extra pasados con `WithUnaryInterceptors` y
+`WithStreamInterceptors` se ejecutan despues de los incorporados; asi se agrega
+JWT:
+
+```go
+srv := serverGRPC.NewIConfig(nil, nil,
+	serverGRPC.WithUnaryInterceptors(middlewares.RequireJWTUnaryServerInterceptor()),
+	serverGRPC.WithStreamInterceptors(middlewares.RequireJWTStreamServerInterceptor()),
+)
+```
 
 ```go
 package main
@@ -470,6 +514,38 @@ if err != nil {
 Usa `NewGenericRestFromConfig()` o las claves TLS del cliente gRPC cuando
 quieras construir transportes desde `viper`.
 
+## OpenTelemetry
+
+Cada senal esta apagada hasta que una variable de entorno la enciende, asi que
+un servicio sin collector corre sin errores de exportacion. Los bootstraps Gin y
+gRPC inicializan las tres senales; los entrypoints propios llaman
+`traces.InitTelemetry(ctx, logDir)` de `tools/utilities/traces` despues de
+`LoadEnv`, y ejecutan el shutdown devuelto antes de salir. El shutdown vacia
+logs, luego metricas y luego trazas, y respeta el deadline del contexto.
+
+| Variable | Default | Valores aceptados |
+| --- | --- | --- |
+| `OTEL_TRACES_EXPORTER` | `none` | `otlp`, `console` (alias `logging`) |
+| `OTEL_METRICS_EXPORTER` | `none` | `otlp`, `prometheus` |
+| `OTEL_LOGS_EXPORTER` | `none` | `otlp` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf`, `grpc`; gana `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL` por senal |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `b3`, `b3multi`, `none` |
+| `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | nombres de sampler estandar; los de ratio leen `OTEL_TRACES_SAMPLER_ARG` |
+| `OTEL_SDK_DISABLED` | `false` | `true` apaga todas las senales, logs incluidos |
+
+Un exporter o protocolo desconocido es un error de inicializacion, no un
+fallback silencioso. El resource lleva `service.name` desde `app.name` y
+`service.version` desde `app.version`; `OTEL_SERVICE_NAME` o una entrada
+`service.name` en `OTEL_RESOURCE_ATTRIBUTES` tienen prioridad sobre `app.name`.
+Endpoints y headers siguen las variables estandar `OTEL_EXPORTER_OTLP_*`.
+
+```bash
+export OTEL_TRACES_EXPORTER=otlp
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318
+```
+
 ## Trabajo En Background
 
 `tools/jobs` ofrece jobs en proceso con intervalo fijo. Los jobs arrancan
@@ -497,6 +573,21 @@ func registerJobs() error {
 	return jobs.StopJob("refresh-cache")
 }
 ```
+
+`CronJob` y `CronJobWithID` alinean un job a un disparador de reloj en vez de un
+intervalo fijo. Los campos `Year`, `Month` y `Day` en nil aceptan cualquier
+valor. Con intervalo `0` el job corre una vez al dia a la hora del disparador;
+con un intervalo positivo espera el primer disparo y luego repite cada
+intervalo.
+
+```go
+if _, err := jobs.CronJob(sendDailyReport, jobs.CronTrigger{Hour: 9}, 0); err != nil {
+	return err
+}
+```
+
+`RestartJobs` reinicia el scheduler sin borrar definiciones, y
+`StopAllJobs(clearJobs)` detiene todos los jobs, opcionalmente eliminandolos.
 
 `tools/workers` ofrece un loop simple de workers acotados mediante
 `SetWorkersLimit`, `SetParallelism`, `RunWorkers`, `AddTask`, `StopWorkers` y
@@ -542,7 +633,7 @@ de `cmd/example`.
 
 ## Desarrollo
 
-El workspace usa Go `1.25.0`.
+El workspace usa Go `1.26.0`.
 
 Instalar Staticcheck:
 
@@ -566,6 +657,7 @@ cd ../security && staticcheck ./...
 cd ../encrypt && staticcheck ./...
 cd ../cmd/qgo && staticcheck ./...
 cd ../go-openssl && staticcheck ./...
+cd ../../share/portable && staticcheck ./...
 ```
 
 Usa Staticcheck como parte de la revision local de calidad antes de abrir un

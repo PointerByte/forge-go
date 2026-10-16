@@ -52,6 +52,7 @@ still compiles.
 - ECC key generation and ECDH-derived encryption/decryption
 - Ed25519 signing and verification
 - RSA-PSS and RSA PKCS#1 v1.5 SHA-256 signing and verification
+- provider key rotation, lookup, and deactivation
 - context-aware APIs for cancellation and deadlines
 
 ## Repository Model
@@ -60,6 +61,7 @@ The root package exposes focused interfaces:
 
 - `SymmetricRepository`
 - `AsymmetricRepository`
+- `KeyRepository`
 - `HashRepository`
 - `SignatureRepository`
 - `IRepository`, which combines all of them
@@ -200,6 +202,11 @@ if err := repository.VerifyRSAPSS(ctx, keys.PublicKey, "payload", signature); er
 _ = plainText
 ```
 
+RSA PKCS#1 v1.5 with SHA-256 uses `Sign_RSA_PKCS1v15_SHA256(ctx, privateKey,
+data)` and `Verify_RSA_PKCS1v15_SHA256(ctx, data, publicKey, signature)`. Note
+that the verify method takes the data before the public key, unlike
+`VerifyRSAPSS`.
+
 ## ECC
 
 ```go
@@ -250,6 +257,30 @@ if err := repository.VerifyEd25519(ctx, keys.PublicKey, "payload", signature); e
 }
 ```
 
+## Key Management
+
+`KeyRepository` manages provider keys by id:
+
+```go
+rotated, err := repository.RotateKey(ctx, models.RotateKeyRequest{
+	UID:   "user-123",
+	KeyID: keyData.KeyID,
+})
+if err != nil {
+	panic(err)
+}
+
+current, err := repository.GetKey(ctx, models.GetKeyRequest{UID: "user-123", KeyID: rotated.KeyID})
+if err != nil {
+	panic(err)
+}
+
+err = repository.DeactivateKey(ctx, models.DeactivateKeyRequest{UID: "user-123", KeyID: current.KeyID})
+```
+
+The cloud and PKCS#11 backends implement these operations. The local backend
+has no key store, so all three return an error.
+
 ## Cloud Backends
 
 Cloud packages implement the same repository contract and route operations to
@@ -267,11 +298,14 @@ import (
 Configuration fallback keys:
 
 - AWS KMS: `encrypt.vault.aws-kms.arn`
-- Azure Key Vault: `encrypt.vault.azure-key-vault.key-id`
+- Azure Key Vault: `encrypt.vault.azure-key-vault.key-id`, plus
+  `encrypt.vault.azure-key-vault.vault-url` for the vault the client connects to
 - Google Cloud KMS: `encrypt.vault.gcp-kms.key-id`
 
 Azure and GCP also keep compatibility fallbacks for the older
-`encrypt.azure-key-vault.key-id` and `encrypt.gcp-kms.key-id` keys.
+`encrypt.azure-key-vault.key-id`, `encrypt.azure-key-vault.vault-url`, and
+`encrypt.gcp-kms.key-id` keys. AWS has no legacy fallback: an
+`encrypt.aws-kms.arn` value is ignored.
 
 ## Hardware Backends
 
@@ -330,7 +364,9 @@ Behaviour worth knowing before you deploy:
   equivalent key with a fresh `CKA_ID` and returns a new `KeyRef`. The previous
   key stays usable unless `WithRotateDisablesPrevious` is set.
 - `DeactivateKey` clears the object's usage attributes. On most tokens this is
-  irreversible, unlike the reversible disable the cloud backends offer.
+  irreversible, unlike the reversible disable the cloud backends offer. If the
+  token refuses to clear them, the call fails unless `WithDeactivateDestroys`
+  is set, in which case the object is destroyed instead.
 - `ECDH_Decode` keeps the shared secret inside the token when it implements
   `CKM_HKDF_DERIVE`. Otherwise the ephemeral secret is read out and the
   derivation finishes locally, as the AWS and Azure backends already do; set

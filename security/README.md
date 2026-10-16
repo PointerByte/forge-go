@@ -43,7 +43,8 @@ still compiles.
 
 - `auth/jwt`: JWT creation, signature validation, claim decoding, and signing strategies
 - `auth/cookies`: JWT validation from HTTP cookies
-- `middlewares`: Gin middleware for bearer tokens, cookie tokens, and security headers
+- `middlewares`: Gin middleware for bearer tokens, cookie tokens, and security
+  headers, plus gRPC bearer-token interceptors
 
 ## Capabilities
 
@@ -54,6 +55,7 @@ still compiles.
 - add service-level and per-call validators
 - use request contexts and service-level timeouts
 - protect Gin routes through bearer or cookie JWT middleware
+- protect gRPC services through unary and stream bearer interceptors
 - apply common HTTP security headers
 - plug in custom signing strategies
 
@@ -76,8 +78,13 @@ jwt:
 
 Main keys:
 
-- `jwt.enable`: when explicitly set to `false`, Gin JWT middleware lets requests pass through
-- `jwt.algorithm`: `HS256`, `RS256`, `PS256`, or `EdDSA`; required when using `jwt.keys.*`
+- `jwt.enable`: when explicitly set to `false`, the Gin middlewares and gRPC
+  interceptors let requests pass through. `RequireJWT` and `RequireJWTCookie`
+  read it when the middleware is built; the gRPC interceptors read it on every
+  call
+- `jwt.algorithm`: `HS256`, `RS256`, `PS256`, or `EdDSA`, matched
+  case-insensitively; required by `NewConfiguredService` and by every
+  middleware that builds its service from viper
 - `jwt.cookie.name`: cookie name used by cookie-based auth; defaults to `access_token`
 - `jwt.hmac.secret`: shared secret for `HS256`
 - `jwt.keys.private_key`: asymmetric private key value or PEM file path
@@ -87,17 +94,16 @@ Main keys:
 
 The generic `jwt.keys.*` pair is interpreted according to `jwt.algorithm`: use
 `EdDSA` for Ed25519 keys and `RS256` or `PS256` for RSA keys. Without
-`jwt.algorithm`, generic keys are intentionally ambiguous.
+`jwt.algorithm`, `NewConfiguredService` returns `ErrMissingAlgorithm`, and an
+unknown value returns `ErrUnsupportedAlg`.
 
 The `application.yaml` and `application.json` files in this module are complete
 examples: they include `hmac`, `keys`, and `jwt.algorithm` to document the
 available options.
 
-Configured service inputs can receive direct values through `HMACSecret`,
-`RSAPrivateKey`, `RSAPublicKey`, `EdDSAPrivateKey`, and `EdDSAPublicKey`. The
-`*Key` fields keep their legacy behavior: they point to viper keys, but RSA and
-EdDSA key fields also accept direct PEM paths or Base64-encoded DER values when
-no matching viper key exists.
+`SetJWTAsymmetricKeys(priv, pub, alg)` stores a key pair under
+`jwt.keys.private_key` and `jwt.keys.public_key`; `alg` must be `rsa`, `rs256`,
+`ps256`, or `eddsa`.
 
 Example files:
 
@@ -116,36 +122,40 @@ viper.Set("jwt.algorithm", "EdDSA")
 viper.Set("jwt.keys.private_key", "./certs/jwt/ed25519-key.pem")
 viper.Set("jwt.keys.public_key", "./certs/jwt/ed25519-public.pem")
 
-service, err := jwtservice.NewConfiguredService(jwtservice.ConfigServiceInput{})
+service, err := jwtservice.NewConfiguredService(nil)
 if err != nil {
 	panic(err)
 }
 ```
 
+`NewConfiguredService` takes an optional `*Validator` and dispatches on
+`jwt.algorithm` to `NewHMACService`, `NewRSAService`, `NewRSAPSSService`, or
+`NewEd25519Service`; call one of those directly to skip the dispatch.
+
 Legacy algorithm-specific keys such as `jwt.eddsa.*` and `jwt.rsa.*` are still
 accepted for compatibility. When a generic private or public key is empty, the
 configured RSA, RSA-PSS, or Ed25519 constructor falls back to the corresponding
-legacy key. If you configure multiple strategies, set `jwt.algorithm` or pass
-it in `ConfigServiceInput`:
+legacy key.
 
 ```go
 package main
 
 import (
+	"context"
+
 	jwtservice "github.com/PointerByte/forge-go/security/auth/jwt"
 	"github.com/spf13/viper"
 )
 
 func main() {
-	viper.Set("jwt.algorithm", "HS256")
-	viper.Set("jwt.hmac.secret", "my-secret")
+	viper.Set(jwtservice.DefaultAlgorithmKey, "HS256")
+	viper.Set(jwtservice.DefaultHMACSecretKey, "my-secret")
 
-	hmacSecretKey := jwtservice.DefaultHMACSecretKey
+	var validator jwtservice.Validator = func(ctx context.Context, token jwtservice.Token) error {
+		return nil
+	}
 
-	service, err := jwtservice.NewConfiguredService(jwtservice.ConfigServiceInput{
-		Algorithm:     "HS256",
-		HMACSecretKey: &hmacSecretKey,
-	})
+	service, err := jwtservice.NewConfiguredService(&validator)
 	if err != nil {
 		panic(err)
 	}
@@ -294,6 +304,11 @@ The parsed token is stored under `middlewares.JWTTokenContextKey.String()`.
 Without a claims factory, decoded claims are stored as `map[string]any`.
 Customize context keys with `WithJWTContextKeys`.
 
+Failures abort with `401` and `{"error": "<message>"}`; replace that response
+with `WithJWTUnauthorizedHandler`. The middleware builds its service once, when
+it is created. If that fails, for example because `jwt.algorithm` is missing,
+every request gets the unauthorized response.
+
 ## Bearer Interceptors For gRPC
 
 `RequireJWTUnaryServerInterceptor` and `RequireJWTStreamServerInterceptor` read
@@ -327,6 +342,14 @@ claims := claimsValue.(*MyClaims)
 _ = claims
 ```
 
+`JWTTokenFromContext(ctx)` returns the parsed token. Every authentication
+failure returns `codes.Unauthenticated`. The service is built from viper on the
+first call; `WithGRPCJWTServiceFactory` replaces that constructor, for example
+for a custom strategy, and `WithGRPCJWTValidator` adds a validator.
+
+With the root module's `config/server/grpc`, pass the interceptors through
+`WithUnaryInterceptors` and `WithStreamInterceptors`.
+
 Clients must send metadata:
 
 ```text
@@ -347,7 +370,7 @@ hmacSecretKey := jwtservice.DefaultHMACSecretKey
 
 service, err := cookiesauth.NewConfiguredService(cookiesauth.ConfigServiceInput{
 	CookieNameKey: cookiesauth.DefaultCookieNameKey,
-	JWT: jwtservice.ConfigServiceInput{
+	JWT: cookiesauth.JWTConfigServiceInput{
 		Algorithm:     "HS256",
 		HMACSecretKey: &hmacSecretKey,
 	},
@@ -362,13 +385,29 @@ if err := service.Read(request, &claims); err != nil {
 }
 ```
 
+`cookiesauth.JWTConfigServiceInput` accepts direct values through `Algorithm`,
+`HMACSecret`, `RSAPrivateKey`, `RSAPublicKey`, `EdDSAPrivateKey`, and
+`EdDSAPublicKey`, or the names of other viper keys to copy them from through
+the `*Key` pointer fields, plus an optional `Validator`. A `*Key` field whose
+viper key is empty is ignored.
+
+`NewConfiguredService` writes those values into the process-wide viper keys
+(`jwt.algorithm`, `jwt.hmac.secret`, `jwt.keys.private_key`,
+`jwt.keys.public_key`) before building the JWT service, so they also affect any
+other viper-configured service built afterwards. The RSA and EdDSA fields share
+the generic `jwt.keys.*` keys.
+
+The cookie name comes from `CookieName`, then from the viper key named by
+`CookieNameKey` (`jwt.cookie.name` by default), then falls back to
+`access_token`.
+
 Gin cookie middleware:
 
 ```go
 router.Use(middlewares.RequireJWTCookie(
 	middlewares.WithJWTCookieServiceConfig(cookiesauth.ConfigServiceInput{
 		CookieNameKey: cookiesauth.DefaultCookieNameKey,
-		JWT: jwtservice.ConfigServiceInput{
+		JWT: cookiesauth.JWTConfigServiceInput{
 			Algorithm:     "HS256",
 			HMACSecretKey: &hmacSecretKey,
 		},
@@ -377,7 +416,9 @@ router.Use(middlewares.RequireJWTCookie(
 ))
 ```
 
-It reads `jwt.cookie.name` from viper and falls back to `access_token`.
+The cookie middleware stores the token and claims under the same context keys
+as `RequireJWT`. `WithJWTCookieValidator`, `WithJWTCookieContextKeys`, and
+`WithJWTCookieUnauthorizedHandler` mirror the bearer middleware options.
 
 ## Custom Strategies
 
@@ -399,13 +440,27 @@ router.Use(middlewares.RequireJWT(
 
 ## Security Headers
 
-`middlewares.SecurityHeaders()` adds common response headers such as
-`X-Frame-Options`, `Content-Security-Policy`, `Strict-Transport-Security`,
-`Referrer-Policy`, `X-Content-Type-Options`, and `Permissions-Policy`.
+`middlewares.SecurityHeaders()` sets these response headers:
+
+| Header | Value |
+| --- | --- |
+| `X-Frame-Options` | `DENY` |
+| `Content-Security-Policy` | `default-src 'self'; connect-src *; font-src *; script-src-elem * 'unsafe-inline'; img-src * data:; style-src * 'unsafe-inline';` |
+| `X-XSS-Protection` | `1; mode=block` |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` |
+| `Referrer-Policy` | `strict-origin` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Permissions-Policy` | `geolocation=(),midi=(),sync-xhr=(),microphone=(),camera=(),magnetometer=(),gyroscope=(),fullscreen=(self),payment=()` |
+
+The Content-Security-Policy allows scripts, styles, fonts, images, and
+connections from any origin. Services that serve HTML should override it with
+a stricter policy after this middleware runs.
 
 ```go
 router.Use(middlewares.SecurityHeaders())
 ```
+
+The root module's Gin bootstrap installs this middleware on every route.
 
 ## Relationship With `encrypt`
 
@@ -430,12 +485,15 @@ go run .
 Example routes:
 
 - `GET /health`
+- `GET /hmac/health`
 - `POST /hmac/login`
 - `GET /hmac/api/me`
 - `GET /hmac/api/admin`
+- `GET /rsa/health`
 - `POST /rsa/login`
 - `GET /rsa/api/me`
 - `GET /rsa/api/admin`
+- `GET /custom/health`
 - `POST /custom/login`
 - `GET /custom/api/me`
 - `GET /custom/api/admin`

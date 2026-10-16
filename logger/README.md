@@ -41,6 +41,7 @@ still compiles.
 - `middlewares/http`: Gin middleware
 - `middlewares/grpc`: gRPC interceptors
 - `formatter`: structured log models and formatter implementations
+- `sanitizer`: redaction of sensitive keys before formatting and export
 - `viperData`: viper-backed configuration cache used by the logger
 - `utilities`: small caller-tracing helpers
 
@@ -76,7 +77,7 @@ logger:
     - Authorization
     - Cookie
   formatter: json
-  formatDate: "2006-01-02T15:04:05.000"
+  formatDate: "2006-01-02T15:04:05.000Z07:00"
   bodyCaptureMaxBytes: 65536
   rotate:
     enable: true
@@ -100,10 +101,10 @@ Main keys:
 - `server.gin.LoggerWithConfig.SkipQueryString`: omits query strings from logged paths
 - `server.grpc.LoggerWithConfig.enabled`: enables final gRPC request logs
 - `server.grpc.LoggerWithConfig.SkipFunction`: gRPC methods skipped by name (`SayHello`) or full method (`/pkg.Service/SayHello`)
-- `logger.dir`: directory where the log file is created by callers that use this key
+- `logger.dir`: directory where the log file is created by callers that use this key; the file is named `<app.name>.log`
 - `logger.modeTest`: suppresses logger output and trace collection in test mode
-- `logger.level`: `debug`, `info`, `warn`, or `error`
-- `logger.ignoredHeaders`: headers filtered from structured request details
+- `logger.level`: `debug`, `info`, `warn`, or `error`; any other value falls back to `info`
+- `logger.ignoredHeaders`: headers filtered from structured request details, in addition to the built-in list below
 - `logger.formatter`: `json`, `text`, or a custom Go template
 - `logger.formatDate`: Go time layout of the `timestamp` field, in both the
   local line and the exported log body. The default is
@@ -112,19 +113,33 @@ Main keys:
   Setting a layout without an offset, such as `2006-01-02T15:04:05.000`, also
   changes the local line and breaks consumers that validate RFC 3339.
 - `logger.bodyCaptureMaxBytes`: maximum bytes retained independently for an enabled request or response body; absent and non-positive values use 65536
-- `logger.sensibleKeys`: case-insensitive keys or key fragments whose values are redacted before formatting
+- `logger.sensibleKeys`: case-insensitive keys or key fragments whose values are redacted before formatting, in addition to the built-in list below
 - `logger.rotate.*`: file rotation settings backed by `lumberjack`
 
 `viperData` caches values on first use. In tests that change viper values
 inside the same process, call `viperdata.ResetViperDataSingleton()` before
 re-reading logger configuration.
 
+## Built-In Redaction
+
+Both lists start from a baseline that configuration can extend but never
+shorten, so credentials are kept out of logs even with an empty configuration.
+Entries are compared case-insensitively and duplicates are merged.
+
+- Headers never logged, `viperdata.DefaultIgnoredHeaders()`: `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`,
+  `X-Csrf-Token`, `X-Xsrf-Token`
+- Keys always redacted, `viperdata.DefaultSensibleKeys()`: `authorization`,
+  `password`, `passwd`, `secret`, `token`, `access_token`, `refresh_token`,
+  `id_token`, `client_secret`, `api_key`, `apikey`, `private_key`,
+  `credentials`, `session`, `cookie`
+
 ## Sanitization Safety Bound
 
-When at least one `logger.sensibleKeys` entry is configured, structured values
-are sanitized recursively to a maximum depth of 32. Any uninspected subtree
-beyond that bound is replaced with `sanitizer.RedactedValue` (`"[REDACTED]"`);
-the original subtree is never returned. This also bounds cyclic inputs.
+Because the built-in keys always apply, structured values are always sanitized
+recursively, to a maximum depth of 32. Any uninspected subtree beyond that
+bound is replaced with `sanitizer.RedactedValue` (`"[REDACTED]"`); the original
+subtree is never returned. This also bounds cyclic inputs.
 
 ## Bounded Body Capture
 
@@ -185,7 +200,13 @@ func main() {
 writes to stdout and, when `logger.rotate.enable=true`, to a rotated log file.
 It also creates an OpenTelemetry logger provider and returns it so the caller
 can shut it down gracefully. The returned provider is never nil on success, so
-`defer lp.Shutdown(ctx)` is always safe.
+`defer lp.Shutdown(ctx)` is always safe. When export is enabled the provider is
+also installed as the global OpenTelemetry `LoggerProvider`, so code that uses
+`go.opentelemetry.io/otel/log` directly reaches the same pipeline.
+
+The Gin and gRPC server bootstraps in the root module call `InitLogger` for
+you, and `traces.InitTelemetry` in the root module initializes it together with
+traces and metrics.
 
 Bound and record-level `slog` attributes are emitted under the optional
 `attributes` object, with `WithGroup` nesting preserved. Messages and
@@ -207,13 +228,20 @@ selects an exporter, matching the `none` default that `OTEL_TRACES_EXPORTER` and
 
 The value is read as a comma-separated list; the first non-empty entry wins
 after trimming and lowercasing, so `" OTLP , none "` selects `otlp`.
+`OTEL_SDK_DISABLED=true` disables export whatever `OTEL_LOGS_EXPORTER` says, as
+it does for traces and metrics.
 
 When `otlp` is selected, the transport comes from
 `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`, falling back to
-`OTEL_EXPORTER_OTLP_PROTOCOL` and then to `http/protobuf`. Any other resolved
-protocol — including `grpc`, which this module does not link — returns an error
-rather than exporting over a transport the caller did not ask for. The endpoint
-and headers follow the standard `OTEL_EXPORTER_OTLP_*` variables.
+`OTEL_EXPORTER_OTLP_PROTOCOL` and then to `http/protobuf`. Both `http/protobuf`
+and `grpc` are supported; any other value returns an error rather than
+exporting over a transport the caller did not ask for. The endpoint and headers
+follow the standard `OTEL_EXPORTER_OTLP_*` variables.
+
+The log resource uses the same detectors as the root module's traces and
+metrics, so `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_SERVICE_NAME` apply to logs
+too. `app.name` sets `service.name` only when neither variable defines it, and
+`app.version` sets `service.version`.
 
 ```bash
 # Export logs to a collector on the default OTLP HTTP endpoint.
@@ -254,6 +282,11 @@ record built from the same entry:
 `slog` attributes are exported inside the body's `attributes` object, not as
 record attributes. Completed `process` traces are cleared once an entry carrying
 them reaches either sink, so they are never exported twice.
+
+Because the body mirrors the local entry, captured headers and enabled bodies
+in `details` are exported too, after the same header filtering and key
+redaction as the local line. Review `logger.ignoredHeaders` and
+`logger.sensibleKeys` before enabling export.
 
 ## Gin Middleware
 
@@ -324,7 +357,9 @@ limit for their direction.
 Request and response bodies are disabled by default. Use
 `loggrpc.EnableBody(ctxLogger, true, true)` to include them in the final gRPC
 request log, and `loggrpc.EnableTraceBody(ctxLogger, true, true)` to include
-trace service bodies.
+trace service bodies. `loggrpc.DisableGRPCBody(ctx, request, response)` and
+`loggrpc.DisableGRPCTraceBody(ctx, request, response)` set the same flags from
+a plain `context.Context` and return the logger context for chaining.
 
 Final gRPC request logging intentionally ignores `codes.Unauthenticated` and
 `codes.PermissionDenied` errors, so JWT authorization failures do not emit
@@ -351,13 +386,19 @@ ctxLogger.Warn("dependency latency is high")
 ctxLogger.Error(errors.New("dependency failed"))
 ```
 
+`Infof`, `Debugf`, `Warnf`, and `Errorf` accept a format string and arguments.
+
+When the context carries an active span, the logger adopts its trace and span
+ids, so the log line and the span correlate. Without one it generates a
+correlation id for `traceID` and omits `spanID`.
+
 ## Trace Sections
 
 `TraceInit` and `TraceEnd` add downstream calls or internal subprocesses to the
-`services` array in the structured log.
+`process` array in the structured log (shown as `services` in the text format).
 
 ```go
-process := &formatter.Service{
+process := &formatter.Process{
 	System:  "users-service",
 	Process: "list-users",
 	Method:  "GET",
@@ -373,6 +414,11 @@ process.Code = 200
 
 Common use cases are outbound HTTP/gRPC calls, provider SDK calls, and internal
 business steps that should appear under the same trace.
+
+`TraceEnd` derives `status` from `Code`: `2xx` is `SUCCESS`, `3xx` is `OTHER`,
+`4xx` is `CLIENT_ERROR`, `5xx` is `ERROR`, and any other non-zero code is
+`UNKNOWN`. With `Code` left at `0`, a status set with `SetStatus` is kept and
+an empty one becomes `SUCCESS`.
 
 Trace service request and response bodies are disabled by default. In Gin
 handlers use `httpmiddlewares.EnableTraceBody(c, true, true)`; in gRPC handlers
@@ -402,13 +448,13 @@ log entry.
 
 ```json
 {
-  "timestamp": "2026-06-22T10:30:00.000",
+  "level": "INFO",
+  "timestamp": "2026-06-22T10:30:00.000-05:00",
   "traceID": "a1b2c3d4...",
-  "level": "info",
   "message": "request completed",
   "details": { "system": "orders-api", "method": "GET", "path": "/api/v1/orders" },
   "process": [
-    { "system": "orders-api", "process": "GetOrders", "status": "OK", "latency": 12 }
+    { "system": "orders-api", "process": "GetOrders", "status": "SUCCESS", "latency": 12 }
   ],
   "method": "handler.go",
   "line": 42,
@@ -416,11 +462,17 @@ log entry.
 }
 ```
 
+The line is emitted on a single line; it is indented here for reading.
+`spanID` follows `traceID` when the entry has a span, and `attributes` follows
+`process` when `slog` attributes are present.
+
 ### Text output
 
 ```text
-[2026-06-22T10:30:00.000] [info] [a1b2c3d4...] handler.go:42 - request completed latency=12ms | details={system=orders-api, method=GET, path=/api/v1/orders} | services=[{system=orders-api, process=GetOrders, status=OK, latency=12ms}]
+[2026-06-22T10:30:00.000-05:00] [INFO] [a1b2c3d4...] handler.go:42 - request completed latency=12ms | details={system=orders-api, method=GET, path=/api/v1/orders} | services=[{system=orders-api, process=GetOrders, status=SUCCESS, latency=12ms}]
 ```
+
+When the entry has a span, the third bracket reads `[traceID/spanID]`.
 
 ### Custom templates
 
@@ -430,15 +482,17 @@ value of each entry, so you can reference its exported fields directly:
 
 | Field        | Type        | Description                                  |
 | ------------ | ----------- | -------------------------------------------- |
-| `.Timestamp` | `string`    | Formatted timestamp (`logger.formatDate`)    |
-| `.TraceID`   | `string`    | Trace id for the entry                       |
-| `.Level`     | `Level`     | `debug` / `info` / `warn` / `error`          |
-| `.Message`   | `string`    | Log message                                  |
-| `.Details`   | `Details`   | Request details (system, method, path, etc.) |
-| `.Process`   | `[]Process` | Recorded spans/processes                     |
-| `.Method`    | `string`    | Source file of the call site                 |
-| `.Line`      | `int`       | Source line of the call site                 |
-| `.Latency`   | `int64`     | Latency in milliseconds                      |
+| `.Timestamp`  | `string`         | Formatted timestamp (`logger.formatDate`)    |
+| `.TraceID`    | `string`         | Trace id for the entry                       |
+| `.SpanID`     | `string`         | Span id, empty when no span was active       |
+| `.Level`      | `Level`          | `DEBUG` / `INFO` / `WARN` / `ERROR`          |
+| `.Message`    | `string`         | Log message                                  |
+| `.Details`    | `Details`        | Request details (system, method, path, etc.) |
+| `.Process`    | `[]Process`      | Recorded spans/processes                     |
+| `.Attributes` | `map[string]any` | `slog` attributes, nil when there are none   |
+| `.Method`     | `string`         | Source file of the call site                 |
+| `.Line`       | `int`            | Source line of the call site                 |
+| `.Latency`    | `int64`          | Latency in milliseconds                      |
 
 Templates can also use these registered helper functions:
 
@@ -458,7 +512,7 @@ logger:
 With the entry from the examples above, that produces:
 
 ```text
-info | request completed | [{"latency":12,"process":"GetOrders","status":"OK","system":"orders-api"}]
+INFO | request completed | [{"latency":12,"process":"GetOrders","status":"SUCCESS","system":"orders-api"}]
 ```
 
 **Important — custom templates cannot rename JSON keys.** After rendering,

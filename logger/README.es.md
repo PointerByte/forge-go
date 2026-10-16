@@ -41,6 +41,7 @@ codigo todavia compile.
 - `middlewares/http`: middleware Gin
 - `middlewares/grpc`: interceptores gRPC
 - `formatter`: modelos de log estructurado e implementaciones de formatter
+- `sanitizer`: redaccion de claves sensibles antes de formatear y exportar
 - `viperData`: cache de configuracion respaldada por viper
 - `utilities`: helpers pequenos para detectar caller
 
@@ -76,7 +77,7 @@ logger:
     - Authorization
     - Cookie
   formatter: json
-  formatDate: "2006-01-02T15:04:05.000"
+  formatDate: "2006-01-02T15:04:05.000Z07:00"
   bodyCaptureMaxBytes: 65536
   rotate:
     enable: true
@@ -100,10 +101,10 @@ Claves principales:
 - `server.gin.LoggerWithConfig.SkipQueryString`: omite query strings del path logueado
 - `server.grpc.LoggerWithConfig.enabled`: habilita logs finales de requests gRPC
 - `server.grpc.LoggerWithConfig.SkipFunction`: metodos gRPC omitidos por nombre (`SayHello`) o metodo completo (`/pkg.Service/SayHello`)
-- `logger.dir`: directorio donde se crea el archivo de log cuando el caller usa esta clave
+- `logger.dir`: directorio donde se crea el archivo de log cuando el caller usa esta clave; el archivo se llama `<app.name>.log`
 - `logger.modeTest`: suprime salida de logs y coleccion de trazas en modo test
-- `logger.level`: `debug`, `info`, `warn` o `error`
-- `logger.ignoredHeaders`: headers filtrados de los details estructurados
+- `logger.level`: `debug`, `info`, `warn` o `error`; cualquier otro valor usa `info`
+- `logger.ignoredHeaders`: headers filtrados de los details estructurados, ademas de la lista incorporada descrita abajo
 - `logger.formatter`: `json`, `text` o un template Go custom
 - `logger.formatDate`: layout Go del campo `timestamp`, tanto en la linea
   local como en el body exportado. El default es
@@ -112,17 +113,32 @@ Claves principales:
   Configurar un layout sin offset, como `2006-01-02T15:04:05.000`, tambien
   cambia la linea local y rompe a los consumidores que validan RFC 3339.
 - `logger.bodyCaptureMaxBytes`: maximo de bytes retenidos de forma independiente para un request o response habilitado; valores ausentes o no positivos usan 65536
-- `logger.sensibleKeys`: keys o fragmentos de key case-insensitive cuyos valores se redactan antes de formatear
+- `logger.sensibleKeys`: keys o fragmentos de key case-insensitive cuyos valores se redactan antes de formatear, ademas de la lista incorporada descrita abajo
 - `logger.rotate.*`: configuracion de rotacion de archivos con `lumberjack`
 
 `viperData` cachea valores en el primer uso. En tests que cambian valores de
 viper dentro del mismo proceso, llama `viperdata.ResetViperDataSingleton()`
 antes de volver a leer configuracion del logger.
 
+## Redaccion Incorporada
+
+Ambas listas parten de una base que la configuracion puede ampliar pero nunca
+acortar, asi que las credenciales quedan fuera de los logs incluso con la
+configuracion vacia. Las entradas se comparan sin distinguir mayusculas y los
+duplicados se unifican.
+
+- Headers que nunca se loguean, `viperdata.DefaultIgnoredHeaders()`:
+  `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`,
+  `X-Auth-Token`, `X-Csrf-Token`, `X-Xsrf-Token`
+- Keys que siempre se redactan, `viperdata.DefaultSensibleKeys()`:
+  `authorization`, `password`, `passwd`, `secret`, `token`, `access_token`,
+  `refresh_token`, `id_token`, `client_secret`, `api_key`, `apikey`,
+  `private_key`, `credentials`, `session`, `cookie`
+
 ## Limite Seguro De Sanitizacion
 
-Cuando se configura al menos una entrada en `logger.sensibleKeys`, los valores
-estructurados se sanitizan recursivamente hasta una profundidad maxima de 32.
+Como las keys incorporadas siempre aplican, los valores estructurados siempre
+se sanitizan recursivamente, hasta una profundidad maxima de 32.
 Cualquier subarbol no inspeccionado que supere ese limite se reemplaza con
 `sanitizer.RedactedValue` (`"[REDACTED]"`); nunca se devuelve el subarbol
 original. Esto tambien acota inputs ciclicos.
@@ -186,7 +202,14 @@ func main() {
 stdout y, cuando `logger.rotate.enable=true`, tambien en un archivo rotado.
 Tambien crea un logger provider de OpenTelemetry y lo devuelve para que el
 caller pueda apagarlo de forma ordenada. El provider devuelto nunca es nil
-cuando no hay error, asi que `defer lp.Shutdown(ctx)` siempre es seguro.
+cuando no hay error, asi que `defer lp.Shutdown(ctx)` siempre es seguro. Con la
+exportacion activa, el provider tambien se instala como `LoggerProvider` global
+de OpenTelemetry, asi que el codigo que usa `go.opentelemetry.io/otel/log`
+directamente llega al mismo pipeline.
+
+Los bootstraps de servidor Gin y gRPC del modulo raiz llaman `InitLogger` por
+ti, y `traces.InitTelemetry` del modulo raiz lo inicializa junto con trazas y
+metricas.
 
 Los atributos ligados y por registro de `slog` se emiten bajo el objeto
 opcional `attributes`, preservando la anidacion de `WithGroup`. Los mensajes y
@@ -208,14 +231,20 @@ ya usan `OTEL_TRACES_EXPORTER` y `OTEL_METRICS_EXPORTER` en el modulo principal:
 
 El valor se lee como lista separada por comas; gana la primera entrada no vacia
 despues de recortar espacios y pasar a minusculas, asi que `" OTLP , none "`
-selecciona `otlp`.
+selecciona `otlp`. `OTEL_SDK_DISABLED=true` desactiva la exportacion diga lo que
+diga `OTEL_LOGS_EXPORTER`, igual que para trazas y metricas.
 
 Cuando se selecciona `otlp`, el transporte sale de
 `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`, con fallback a
-`OTEL_EXPORTER_OTLP_PROTOCOL` y luego a `http/protobuf`. Cualquier otro
-protocolo resuelto —incluido `grpc`, que este modulo no enlaza— devuelve error
-en lugar de exportar por un transporte que el caller no pidio. El endpoint y los
-headers siguen las variables estandar `OTEL_EXPORTER_OTLP_*`.
+`OTEL_EXPORTER_OTLP_PROTOCOL` y luego a `http/protobuf`. Se soportan
+`http/protobuf` y `grpc`; cualquier otro valor devuelve error en lugar de
+exportar por un transporte que el caller no pidio. El endpoint y los headers
+siguen las variables estandar `OTEL_EXPORTER_OTLP_*`.
+
+El resource de logs usa los mismos detectores que las trazas y metricas del
+modulo raiz, asi que `OTEL_RESOURCE_ATTRIBUTES` y `OTEL_SERVICE_NAME` tambien
+aplican a los logs. `app.name` define `service.name` solo cuando ninguna de esas
+variables lo define, y `app.version` define `service.version`.
 
 ```bash
 # Exportar logs a un collector en el endpoint OTLP HTTP por defecto.
@@ -258,6 +287,11 @@ Los atributos de `slog` se exportan dentro del objeto `attributes` del body, no
 como atributos del registro. Las trazas `process` completadas se limpian en
 cuanto una entrada que las contiene llega a cualquiera de los dos destinos, asi
 que nunca se exportan dos veces.
+
+Como el body refleja la entrada local, los headers capturados y los bodies
+habilitados en `details` tambien se exportan, tras el mismo filtrado de headers
+y redaccion de keys que la linea local. Revisa `logger.ignoredHeaders` y
+`logger.sensibleKeys` antes de activar la exportacion.
 
 ## Middleware Gin
 
@@ -328,7 +362,9 @@ direccion.
 Los request y response bodies estan deshabilitados por default. Usa
 `loggrpc.EnableBody(ctxLogger, true, true)` para incluirlos en el log gRPC
 final, y `loggrpc.EnableTraceBody(ctxLogger, true, true)` para incluir bodies
-en servicios de traza.
+en servicios de traza. `loggrpc.DisableGRPCBody(ctx, request, response)` y
+`loggrpc.DisableGRPCTraceBody(ctx, request, response)` definen los mismos flags
+desde un `context.Context` comun y devuelven el contexto logger para encadenar.
 
 El logging gRPC final ignora intencionalmente errores `codes.Unauthenticated` y
 `codes.PermissionDenied`, por lo que las fallas de autorizacion JWT no emiten
@@ -355,13 +391,20 @@ ctxLogger.Warn("dependency latency is high")
 ctxLogger.Error(errors.New("dependency failed"))
 ```
 
+`Infof`, `Debugf`, `Warnf` y `Errorf` aceptan un string de formato y argumentos.
+
+Cuando el contexto lleva un span activo, el logger adopta sus ids de traza y de
+span, asi que la linea de log y el span quedan correlacionados. Sin span genera
+un id de correlacion para `traceID` y omite `spanID`.
+
 ## Secciones De Traza
 
 `TraceInit` y `TraceEnd` agregan llamadas downstream o subprocesos internos al
-array `services` del log estructurado.
+array `process` del log estructurado (mostrado como `services` en el formato de
+texto).
 
 ```go
-process := &formatter.Service{
+process := &formatter.Process{
 	System:  "users-service",
 	Process: "list-users",
 	Method:  "GET",
@@ -377,6 +420,11 @@ process.Code = 200
 
 Casos comunes: llamadas HTTP/gRPC salientes, llamadas a SDKs de proveedores y
 pasos internos de negocio que deben aparecer bajo la misma traza.
+
+`TraceEnd` deriva `status` desde `Code`: `2xx` es `SUCCESS`, `3xx` es `OTHER`,
+`4xx` es `CLIENT_ERROR`, `5xx` es `ERROR` y cualquier otro codigo distinto de
+cero es `UNKNOWN`. Con `Code` en `0`, se conserva un status definido con
+`SetStatus` y uno vacio pasa a `SUCCESS`.
 
 Los request y response bodies de servicios de traza estan deshabilitados por
 default. En handlers Gin usa `httpmiddlewares.EnableTraceBody(c, true, true)`;
@@ -407,13 +455,13 @@ renderiza por cada entrada de log.
 
 ```json
 {
-  "timestamp": "2026-06-22T10:30:00.000",
+  "level": "INFO",
+  "timestamp": "2026-06-22T10:30:00.000-05:00",
   "traceID": "a1b2c3d4...",
-  "level": "info",
   "message": "request completed",
   "details": { "system": "orders-api", "method": "GET", "path": "/api/v1/orders" },
   "process": [
-    { "system": "orders-api", "process": "GetOrders", "status": "OK", "latency": 12 }
+    { "system": "orders-api", "process": "GetOrders", "status": "SUCCESS", "latency": 12 }
   ],
   "method": "handler.go",
   "line": 42,
@@ -421,11 +469,17 @@ renderiza por cada entrada de log.
 }
 ```
 
+La linea se emite en una sola linea; aqui esta indentada para leerla. `spanID`
+sigue a `traceID` cuando la entrada tiene span, y `attributes` sigue a `process`
+cuando hay atributos de `slog`.
+
 ### Salida de texto
 
 ```text
-[2026-06-22T10:30:00.000] [info] [a1b2c3d4...] handler.go:42 - request completed latency=12ms | details={system=orders-api, method=GET, path=/api/v1/orders} | services=[{system=orders-api, process=GetOrders, status=OK, latency=12ms}]
+[2026-06-22T10:30:00.000-05:00] [INFO] [a1b2c3d4...] handler.go:42 - request completed latency=12ms | details={system=orders-api, method=GET, path=/api/v1/orders} | services=[{system=orders-api, process=GetOrders, status=SUCCESS, latency=12ms}]
 ```
+
+Cuando la entrada tiene span, el tercer corchete muestra `[traceID/spanID]`.
 
 ### Templates custom
 
@@ -434,17 +488,19 @@ Se parsea como un `text/template` de Go y se ejecuta contra el valor
 `formatter.LogFormat` de cada entrada, asi que puedes referenciar sus campos
 exportados directamente:
 
-| Campo        | Tipo        | Descripcion                                   |
-| ------------ | ----------- | --------------------------------------------- |
-| `.Timestamp` | `string`    | Timestamp formateado (`logger.formatDate`)    |
-| `.TraceID`   | `string`    | Trace id de la entrada                        |
-| `.Level`     | `Level`     | `debug` / `info` / `warn` / `error`           |
-| `.Message`   | `string`    | Mensaje del log                               |
-| `.Details`   | `Details`   | Detalles de la request (system, method, path) |
-| `.Process`   | `[]Process` | Spans/procesos registrados                    |
-| `.Method`    | `string`    | Archivo fuente del call site                  |
-| `.Line`      | `int`       | Linea fuente del call site                    |
-| `.Latency`   | `int64`     | Latencia en milisegundos                      |
+| Campo         | Tipo             | Descripcion                                   |
+| ------------- | ---------------- | --------------------------------------------- |
+| `.Timestamp`  | `string`         | Timestamp formateado (`logger.formatDate`)    |
+| `.TraceID`    | `string`         | Trace id de la entrada                        |
+| `.SpanID`     | `string`         | Span id, vacio cuando no habia span activo    |
+| `.Level`      | `Level`          | `DEBUG` / `INFO` / `WARN` / `ERROR`           |
+| `.Message`    | `string`         | Mensaje del log                               |
+| `.Details`    | `Details`        | Detalles de la request (system, method, path) |
+| `.Process`    | `[]Process`      | Spans/procesos registrados                    |
+| `.Attributes` | `map[string]any` | Atributos de `slog`, nil cuando no hay        |
+| `.Method`     | `string`         | Archivo fuente del call site                  |
+| `.Line`       | `int`            | Linea fuente del call site                    |
+| `.Latency`    | `int64`          | Latencia en milisegundos                      |
 
 Los templates tambien pueden usar estas funciones helper registradas:
 
@@ -464,7 +520,7 @@ logger:
 Con la entrada de los ejemplos de arriba, eso produce:
 
 ```text
-info | request completed | [{"latency":12,"process":"GetOrders","status":"OK","system":"orders-api"}]
+INFO | request completed | [{"latency":12,"process":"GetOrders","status":"SUCCESS","system":"orders-api"}]
 ```
 
 **Importante — los templates custom no pueden renombrar las keys JSON.** Tras
