@@ -30,9 +30,10 @@
 // token that only implements OAEP with SHA-1, as SoftHSM2 does, reports
 // ErrOAEPHashUnsupported rather than silently weakening the parameters.
 //
-// Configuration is read from viper using "encrypt.vault.pkcs11.module",
-// "encrypt.vault.pkcs11.token-label", "encrypt.vault.pkcs11.slot" and
-// "encrypt.vault.pkcs11.max-sessions", and every value can be overridden
+// Configuration is read from viper using "encrypt.vault.pkcs11.module-path",
+// "encrypt.vault.pkcs11.token-label", "encrypt.vault.pkcs11.slot-id",
+// "encrypt.vault.pkcs11.key-uri" and "encrypt.vault.pkcs11.max-sessions", and
+// every value can be overridden
 // through functional options. The token PIN is never read from configuration:
 // it is supplied by the caller through a PinProvider.
 package pkcs11

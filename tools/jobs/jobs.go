@@ -273,9 +273,9 @@ var lifecycleMu sync.Mutex
 
 // StartJobs starts the package-level jobs scheduler.
 //
-// This is the entry point used by higher-level server packages such as
-// `server/gin.Start(...)`. Concurrent lifecycle calls are serialized, and
-// repeated starts do not duplicate running jobs.
+// The Gin and gRPC server bootstraps do not call it, so applications that
+// register jobs must call it explicitly. Concurrent lifecycle calls are
+// serialized, and repeated starts do not duplicate running jobs.
 //
 // When `server.modeTest=true`, registered jobs are not started.
 func StartJobs() {

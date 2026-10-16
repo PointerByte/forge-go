@@ -10,8 +10,12 @@
 //   - middleware and interceptor wiring for Gin and gRPC server instrumentation
 //
 // Main entry points:
+//   - InitTelemetry to initialize logs, metrics, and traces with one shutdown
 //   - InitOtel to install global tracer and meter providers
 //   - MiddlewareOtel to instrument incoming Gin requests
-//   - MiddlewareOtelGRPCUnary to instrument unary gRPC handlers
-//   - MiddlewareOtelGRPCStream to instrument streaming gRPC handlers
+//   - StatsHandlerOtelGRPCServer and StatsHandlerOtelGRPCClient to instrument
+//     gRPC servers and clients through the official otelgrpc stats handlers
+//
+// MiddlewareOtelGRPCUnary and MiddlewareOtelGRPCStream are deprecated in favor
+// of StatsHandlerOtelGRPCServer.
 package traces

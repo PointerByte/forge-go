@@ -88,11 +88,14 @@ Despues de escribir los archivos, ejecuta:
 ```bash
 go mod init <modulo>
 go mod edit -go=<version>
+go get github.com/PointerByte/forge-go@v1.0.10 github.com/PointerByte/forge-go/logger@v1.0.10
 go mod tidy
 ```
 
-`go mod tidy` descarga las dependencias forge-go necesarias para el servicio
-generado, asi que puede requerir acceso a red.
+El paso `go get` fija las versiones de forge-go y logger con las que se
+construyo esta version de `qgo`. `go get` y `go mod tidy` descargan las
+dependencias forge-go necesarias para el servicio generado, asi que puede
+requerir acceso a red.
 
 ## Scaffold Gin
 
@@ -103,9 +106,9 @@ El scaffold Gin crea un `cmd/main.go` que:
 - registra `GET /hello`
 - inicia el servidor con `serverGin.Start(srv)`
 
-La configuracion generada incluye settings del servidor Gin, logging, flags de
-OpenTelemetry, defaults JWT, configuracion TLS para clientes HTTP/gRPC y
-placeholders TLS/mTLS para certificados del servidor.
+La configuracion generada incluye settings del servidor Gin, logging, rutas
+omitidas por las trazas, defaults JWT, configuracion TLS para clientes
+HTTP/gRPC y placeholders TLS/mTLS para certificados del servidor.
 
 Ejecutar el servicio generado desde su directorio:
 
@@ -126,9 +129,12 @@ El scaffold gRPC crea un `cmd/main.go` minimo que:
 - llama `serverGRPC.NewIConfig(nil, nil)`
 - inicia el servidor con `srv.Serve()`
 
-La configuracion generada incluye settings del servidor gRPC, logging, flags de
-OpenTelemetry, defaults JWT, configuracion TLS del cliente gRPC y placeholders
-TLS/mTLS.
+No registra ningun servicio. Agrega los tuyos con `srv.Register(...)` antes de
+`Serve`, como se muestra en el README del modulo raiz.
+
+La configuracion generada incluye settings del servidor gRPC, logging, rutas
+omitidas por las trazas, defaults JWT, configuracion TLS del cliente gRPC y
+placeholders TLS/mTLS.
 
 Ejecutar el servicio generado desde su directorio:
 

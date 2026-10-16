@@ -23,9 +23,8 @@ type SymmetricRepository interface {
 
 type AsymmetricRepository interface {
 	// GenerateRSAKeys creates an RSA key pair using AWS KMS when possible.
-	// AWS KMS never exports the private key, so the private-key return value is
-	// always empty and the generated key ARN is stored in viper under
-	// "encrypt.aws-kms.arn".
+	// AWS KMS never exports the private key, so the returned KeyData carries the
+	// key id and ARN in KeyID and KeyRef and only the public key as material.
 	GenerateRSAKeys(ctx context.Context, input models.GenerateRSAKeyRequest) (*models.KeyData, error)
 	// GenerateECDHCurveKeys creates an AWS KMS key-agreement key on the requested NIST
 	// curve and returns its public key and metadata.

@@ -384,6 +384,7 @@ Helpers de lectura:
 - `ReadCertificateFile(path, secret)`
 - `ReadPrivateKeyFile(path, secret)`
 - `ReadPublicKeyFile(path, secret)`
+- `DecryptPEM(content, secret)`, para bytes PEM que ya estan en memoria
 - `UpdateEncryptionSecret(options)`
 
 Los PEM planos pueden leerse con secreto vacio. Los PEM cifrados requieren el

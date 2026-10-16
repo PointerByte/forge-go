@@ -88,11 +88,13 @@ After writing the files, it runs:
 ```bash
 go mod init <module>
 go mod edit -go=<version>
+go get github.com/PointerByte/forge-go@v1.0.10 github.com/PointerByte/forge-go/logger@v1.0.10
 go mod tidy
 ```
 
-`go mod tidy` downloads the forge-go dependencies required by the generated
-service, so network access may be needed.
+The `go get` step pins the forge-go and logger versions this `qgo` release was
+built against. `go get` and `go mod tidy` download the forge-go dependencies
+required by the generated service, so network access may be needed.
 
 ## Gin Scaffold
 
@@ -104,8 +106,8 @@ The Gin scaffold creates a `cmd/main.go` that:
 - starts the server with `serverGin.Start(srv)`
 
 The generated application config includes Gin server settings, logging,
-OpenTelemetry flags, JWT defaults, HTTP/gRPC client TLS settings, and
-TLS/mTLS placeholders for server certificates.
+trace skip paths, JWT defaults, HTTP/gRPC client TLS settings, and TLS/mTLS
+placeholders for server certificates.
 
 Run the generated service from its output directory:
 
@@ -126,8 +128,11 @@ The gRPC scaffold creates a minimal `cmd/main.go` that:
 - calls `serverGRPC.NewIConfig(nil, nil)`
 - starts the server with `srv.Serve()`
 
+It registers no service. Add yours with `srv.Register(...)` before `Serve`, as
+shown in the root module README.
+
 The generated application config includes gRPC server settings, logging,
-OpenTelemetry flags, JWT defaults, gRPC client TLS settings, and TLS/mTLS
+trace skip paths, JWT defaults, gRPC client TLS settings, and TLS/mTLS
 placeholders.
 
 Run the generated service from its output directory:

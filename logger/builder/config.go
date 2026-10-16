@@ -224,8 +224,9 @@ var filepathAbs = filepath.Abs
 // and returns the logger provider so it can be shut down gracefully when needed.
 //
 // The returned provider is never nil on success. Log export is disabled unless
-// OTEL_LOGS_EXPORTER selects an exporter, in which case the provider carries no
-// processor and the slog handler exports nothing.
+// OTEL_LOGS_EXPORTER selects an exporter and OTEL_SDK_DISABLED is not true;
+// while it is disabled the provider carries no processor and the slog handler
+// exports nothing.
 //
 // When running the application as a server, logging is already initialized
 // automatically, so calling this function manually is not necessary.

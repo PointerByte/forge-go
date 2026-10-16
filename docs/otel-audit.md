@@ -7,6 +7,31 @@ Method: read of the actual current source (no reliance on prior analyses), plus
 inspection of the resolved module cache for `go.opentelemetry.io/otel@v1.45.0`,
 `otelgrpc@v0.69.0`/`@v0.70.0` and `otelgin@v0.70.0`.
 
+## Status (re-verified 2026-10-16 at `b9bf817`)
+
+Sections 1–4 below are the original findings and describe the code as it was
+on 2026-08-22. Every defect in section 4 has since been corrected:
+
+| # | Defect | Status today |
+| --- | --- | --- |
+| 1 | Two HTTP server spans | Fixed. `logger/middlewares/http.InitLogger` adopts the `otelgin` span and opens its own only when no span exists. |
+| 2 | Two gRPC server spans | Fixed. `config/server/grpc` installs `traces.StatsHandlerOtelGRPCServer()`; the logger interceptors adopt its span. |
+| 3 | Obsolete RPC semantic conventions | Fixed. Server spans come from official `otelgrpc` (`rpc.system.name`, `rpc.method`, `rpc.response.status_code`). `MiddlewareOtelGRPCUnary`/`Stream` are deprecated and no longer start spans. |
+| 4 | `otelgrpc` unused on the server | Fixed, see 2. |
+| 5 | Logs pipeline gaps | Fixed. OTLP/gRPC is supported, `OTEL_SDK_DISABLED` disables logs, the log resource uses the same detectors as traces and metrics, and the global `LoggerProvider` is set when export is enabled. |
+| 6 | Fabricated trace ids | Fixed. `builder.New` adopts the trace and span ids of an active span and falls back to a generated correlation id only without one. |
+| 7 | Mixed semconv versions | Fixed. Every import uses `semconv/v1.43.0`. |
+| 8 | Non-standard `route`/`method` metric attributes | Fixed. `MiddlewareOtel` no longer adds them. |
+| 9 | Shutdown order, no single shutdown | Fixed. `traces.InitTelemetry` returns one bounded shutdown that flushes logs, then metrics, then traces. |
+| 10 | Repeated `InitOtel` leaks providers | Fixed. `InitOtel` shuts down the previous pipeline before installing a new one. |
+
+Two statements in the "Security / cardinality" findings have also changed:
+`logger.ignoredHeaders` and `logger.sensibleKeys` now extend built-in lists of
+credential headers and keys, so redaction is no longer empty by default. The
+`otelslog` bridge is gone: exported log records carry the whole sanitized entry
+as their body, so captured headers and enabled bodies in `details` **do** reach
+OTLP when log export is on. See the logger README for the details.
+
 ## 1. Where OpenTelemetry lives today
 
 | Area | Package | Role |

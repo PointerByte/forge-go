@@ -8,9 +8,11 @@ jwt:
     private_key: "./certs/jwt/ed25519-key.pem"
     public_key: "./certs/jwt/ed25519-public.pem"
 encrypt:
-  aws-kms:
-    arn: ""
-  azure-key-vault:
-    key-id: ""
-  gcp-kms:
-    key-id: ""
+  vault:
+    aws-kms:
+      arn: ""
+    azure-key-vault:
+      key-id: ""
+      vault-url: ""
+    gcp-kms:
+      key-id: ""

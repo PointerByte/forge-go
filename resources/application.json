@@ -107,7 +107,7 @@
       "Cookie"
     ],
     "formatter": "json",
-    "formatDate": "2006-01-02T15:04:05.000",
+    "formatDate": "2006-01-02T15:04:05.000Z07:00",
     "rotate": {
       "enable": true,
       "maxSize": 10,

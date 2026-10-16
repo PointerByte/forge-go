@@ -381,6 +381,7 @@ Reader helpers:
 - `ReadCertificateFile(path, secret)`
 - `ReadPrivateKeyFile(path, secret)`
 - `ReadPublicKeyFile(path, secret)`
+- `DecryptPEM(content, secret)`, for PEM bytes already in memory
 - `UpdateEncryptionSecret(options)`
 
 Plain PEM files can be read with an empty secret. Encrypted PEM files require
