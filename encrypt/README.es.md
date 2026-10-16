@@ -52,6 +52,7 @@ codigo todavia compile.
 - generacion de llaves ECC y cifrado/descifrado derivado con ECDH
 - firma y verificacion Ed25519
 - firma y verificacion RSA-PSS y RSA PKCS#1 v1.5 SHA-256
+- rotacion, consulta y desactivacion de llaves del proveedor
 - APIs con `context.Context` para cancelacion y deadlines
 
 ## Modelo De Repositorio
@@ -60,6 +61,7 @@ El paquete raiz expone interfaces enfocadas:
 
 - `SymmetricRepository`
 - `AsymmetricRepository`
+- `KeyRepository`
 - `HashRepository`
 - `SignatureRepository`
 - `IRepository`, que combina todas las anteriores
@@ -201,6 +203,11 @@ if err := repository.VerifyRSAPSS(ctx, keys.PublicKey, "payload", signature); er
 _ = plainText
 ```
 
+RSA PKCS#1 v1.5 con SHA-256 usa `Sign_RSA_PKCS1v15_SHA256(ctx, privateKey,
+data)` y `Verify_RSA_PKCS1v15_SHA256(ctx, data, publicKey, signature)`. Ojo: el
+metodo de verificacion recibe los datos antes de la llave publica, a diferencia
+de `VerifyRSAPSS`.
+
 ## ECC
 
 ```go
@@ -251,6 +258,30 @@ if err := repository.VerifyEd25519(ctx, keys.PublicKey, "payload", signature); e
 }
 ```
 
+## Gestion De Llaves
+
+`KeyRepository` gestiona llaves del proveedor por id:
+
+```go
+rotated, err := repository.RotateKey(ctx, models.RotateKeyRequest{
+	UID:   "user-123",
+	KeyID: keyData.KeyID,
+})
+if err != nil {
+	panic(err)
+}
+
+current, err := repository.GetKey(ctx, models.GetKeyRequest{UID: "user-123", KeyID: rotated.KeyID})
+if err != nil {
+	panic(err)
+}
+
+err = repository.DeactivateKey(ctx, models.DeactivateKeyRequest{UID: "user-123", KeyID: current.KeyID})
+```
+
+Los backends cloud y PKCS#11 implementan estas operaciones. El backend local no
+tiene almacen de llaves, asi que las tres devuelven error.
+
 ## Backends Cloud
 
 Los paquetes cloud implementan el mismo contrato de repositorio y enrutan
@@ -269,11 +300,15 @@ import (
 Claves de configuracion usadas como fallback:
 
 - AWS KMS: `encrypt.vault.aws-kms.arn`
-- Azure Key Vault: `encrypt.vault.azure-key-vault.key-id`
+- Azure Key Vault: `encrypt.vault.azure-key-vault.key-id`, mas
+  `encrypt.vault.azure-key-vault.vault-url` para el vault al que conecta el
+  cliente
 - Google Cloud KMS: `encrypt.vault.gcp-kms.key-id`
 
 Azure y GCP tambien conservan compatibilidad con las claves antiguas
-`encrypt.azure-key-vault.key-id` y `encrypt.gcp-kms.key-id`.
+`encrypt.azure-key-vault.key-id`, `encrypt.azure-key-vault.vault-url` y
+`encrypt.gcp-kms.key-id`. AWS no tiene fallback legacy: un valor en
+`encrypt.aws-kms.arn` se ignora.
 
 ## Backends Hardware
 
@@ -333,7 +368,9 @@ Comportamiento que conviene conocer antes de desplegar:
   anterior sigue usable salvo que se active `WithRotateDisablesPrevious`.
 - `DeactivateKey` limpia los atributos de uso del objeto. En la mayoria de
   tokens esto es irreversible, a diferencia del desactivado reversible que
-  ofrecen los backends cloud.
+  ofrecen los backends cloud. Si el token se niega a limpiarlos, la llamada
+  falla salvo que se active `WithDeactivateDestroys`, en cuyo caso el objeto se
+  destruye.
 - `ECDH_Decode` mantiene el secreto compartido dentro del token cuando este
   implementa `CKM_HKDF_DERIVE`. Si no, el secreto efimero se extrae y la
   derivacion termina localmente, igual que ya hacen los backends de AWS y Azure;
